@@ -9,6 +9,6 @@ Skills are pure functions that:
 - NEVER call LLMs directly
 """
 
-from src.skills.dice import roll_dice, DiceResult
+from src.skills.dice import DiceResult, roll_dice
 
 __all__ = ["roll_dice", "DiceResult"]
