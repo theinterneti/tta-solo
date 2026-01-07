@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from src.skills.dice import roll_dice, roll_d20, roll_advantage, roll_disadvantage, DiceResult
+
+from src.skills.dice import roll_advantage, roll_d20, roll_dice, roll_disadvantage
 
 
 class TestRollDice:
