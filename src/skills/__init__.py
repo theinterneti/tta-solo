@@ -9,6 +9,15 @@ Skills are pure functions that:
 - NEVER call LLMs directly
 """
 
+from src.skills.checks import (
+    SKILL_ABILITIES,
+    CheckResult,
+    SaveResult,
+    SkillProficiencies,
+    ability_check,
+    make_saving_throw,
+    skill_check,
+)
 from src.skills.combat import (
     Abilities,
     AttackResult,
@@ -22,8 +31,10 @@ from src.skills.combat import (
 from src.skills.dice import DiceResult, roll_dice
 
 __all__ = [
+    # Dice
     "roll_dice",
     "DiceResult",
+    # Combat
     "resolve_attack",
     "AttackResult",
     "Combatant",
@@ -32,4 +43,12 @@ __all__ = [
     "Abilities",
     "CoverType",
     "get_ability_modifier",
+    # Checks & Saves
+    "make_saving_throw",
+    "SaveResult",
+    "skill_check",
+    "ability_check",
+    "CheckResult",
+    "SkillProficiencies",
+    "SKILL_ABILITIES",
 ]
