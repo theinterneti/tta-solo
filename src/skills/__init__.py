@@ -9,6 +9,27 @@ Skills are pure functions that:
 - NEVER call LLMs directly
 """
 
+from src.skills.combat import (
+    Abilities,
+    AttackResult,
+    Combatant,
+    CoverType,
+    Weapon,
+    WeaponProperty,
+    get_ability_modifier,
+    resolve_attack,
+)
 from src.skills.dice import DiceResult, roll_dice
 
-__all__ = ["roll_dice", "DiceResult"]
+__all__ = [
+    "roll_dice",
+    "DiceResult",
+    "resolve_attack",
+    "AttackResult",
+    "Combatant",
+    "Weapon",
+    "WeaponProperty",
+    "Abilities",
+    "CoverType",
+    "get_ability_modifier",
+]
