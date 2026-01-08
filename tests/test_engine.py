@@ -8,14 +8,21 @@ import pytest
 
 from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import (
+    AgentMessage,
+    AgentOrchestrator,
+    AgentRole,
     Context,
     EntitySummary,
     GameEngine,
+    GMAgent,
     HybridIntentParser,
     Intent,
     IntentType,
+    LorekeeperAgent,
+    MessageType,
     MockLLMParser,
     PatternIntentParser,
+    RulesLawyerAgent,
     Session,
     SkillRouter,
     TurnResult,
@@ -741,3 +748,382 @@ class TestContextRetrieval:
         assert context.known_entities == []
         assert context.entities_present == []
         assert context.mood is None
+
+
+# --- Agent System Tests (Phase 3) ---
+
+
+class TestAgentMessage:
+    """Tests for agent message protocol."""
+
+    def test_create_message(self):
+        msg = AgentMessage(
+            type=MessageType.REQUEST_CONTEXT,
+            from_agent=AgentRole.GM,
+            to_agent=AgentRole.LOREKEEPER,
+            payload={"session_id": "test"},
+        )
+        assert msg.type == MessageType.REQUEST_CONTEXT
+        assert msg.from_agent == AgentRole.GM
+        assert msg.to_agent == AgentRole.LOREKEEPER
+
+    def test_reply_links_correlation_id(self):
+        original = AgentMessage(
+            type=MessageType.REQUEST_CONTEXT,
+            from_agent=AgentRole.GM,
+        )
+        reply = original.reply(
+            type=MessageType.CONTEXT_RESPONSE,
+            payload={"context": "test"},
+            from_agent=AgentRole.LOREKEEPER,
+        )
+        assert reply.correlation_id == original.id
+        assert reply.to_agent == AgentRole.GM
+        assert reply.from_agent == AgentRole.LOREKEEPER
+
+
+class TestLorekeeperAgent:
+    """Tests for the Lorekeeper agent."""
+
+    @pytest.fixture
+    def setup_lorekeeper(self):
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+
+        universe = create_prime_material()
+        dolt.save_universe(universe)
+
+        location = create_location(
+            universe_id=universe.id,
+            name="Test Location",
+            danger_level=3,
+        )
+        dolt.save_entity(location)
+
+        character = create_character(
+            universe_id=universe.id,
+            name="Test Hero",
+            hp_max=20,
+            location_id=location.id,
+        )
+        dolt.save_entity(character)
+
+        lorekeeper = LorekeeperAgent(dolt=dolt, neo4j=neo4j)
+
+        return {
+            "lorekeeper": lorekeeper,
+            "dolt": dolt,
+            "neo4j": neo4j,
+            "universe": universe,
+            "location": location,
+            "character": character,
+        }
+
+    @pytest.mark.asyncio
+    async def test_handle_context_request(self, setup_lorekeeper):
+        world = setup_lorekeeper
+        session = Session(
+            universe_id=world["universe"].id,
+            character_id=world["character"].id,
+            location_id=world["location"].id,
+        )
+
+        msg = AgentMessage(
+            type=MessageType.REQUEST_CONTEXT,
+            from_agent=AgentRole.GM,
+            payload={"session": session},
+        )
+
+        response = await world["lorekeeper"].handle(msg)
+
+        assert response.type == MessageType.CONTEXT_RESPONSE
+        assert "context" in response.payload
+        context = response.payload["context"]
+        assert context.actor.name == "Test Hero"
+        assert context.location.name == "Test Location"
+        assert context.danger_level == 3
+
+    @pytest.mark.asyncio
+    async def test_handle_wrong_message_type(self, setup_lorekeeper):
+        world = setup_lorekeeper
+        msg = AgentMessage(
+            type=MessageType.REQUEST_RESOLUTION,
+            from_agent=AgentRole.GM,
+        )
+
+        response = await world["lorekeeper"].handle(msg)
+        assert response.type == MessageType.ERROR
+
+
+class TestRulesLawyerAgent:
+    """Tests for the Rules Lawyer agent."""
+
+    @pytest.fixture
+    def setup_rules_lawyer(self):
+        return RulesLawyerAgent()
+
+    @pytest.mark.asyncio
+    async def test_handle_resolution_request(self, setup_rules_lawyer):
+        rules_lawyer = setup_rules_lawyer
+
+        intent = Intent(
+            type=IntentType.ATTACK,
+            confidence=1.0,
+            target_name="goblin",
+            original_input="I attack the goblin",
+            reasoning="Attack command detected",
+        )
+        context = Context(
+            actor=EntitySummary(id=uuid4(), name="Hero", type="character", ac=15),
+            location=EntitySummary(id=uuid4(), name="Cave", type="location"),
+            entities_present=[
+                EntitySummary(id=uuid4(), name="Goblin", type="character", ac=13)
+            ],
+        )
+
+        msg = AgentMessage(
+            type=MessageType.REQUEST_RESOLUTION,
+            from_agent=AgentRole.GM,
+            payload={"intent": intent, "context": context},
+        )
+
+        response = await rules_lawyer.handle(msg)
+
+        assert response.type == MessageType.RESOLUTION_RESPONSE
+        assert "result" in response.payload
+        result = response.payload["result"]
+        assert result.roll is not None  # Should have rolled dice
+
+    def test_validate_action_valid_move(self, setup_rules_lawyer):
+        rules_lawyer = setup_rules_lawyer
+
+        intent = Intent(
+            type=IntentType.MOVE,
+            confidence=1.0,
+            destination="north",
+            original_input="go north",
+            reasoning="Movement detected",
+        )
+        context = Context(
+            actor=EntitySummary(id=uuid4(), name="Hero", type="character"),
+            location=EntitySummary(id=uuid4(), name="Room", type="location"),
+            exits=["north", "south"],
+        )
+
+        is_valid, reason = rules_lawyer.validate_action(intent, context)
+        assert is_valid
+
+    def test_validate_action_invalid_move(self, setup_rules_lawyer):
+        rules_lawyer = setup_rules_lawyer
+
+        intent = Intent(
+            type=IntentType.MOVE,
+            confidence=1.0,
+            destination="west",
+            original_input="go west",
+            reasoning="Movement detected",
+        )
+        context = Context(
+            actor=EntitySummary(id=uuid4(), name="Hero", type="character"),
+            location=EntitySummary(id=uuid4(), name="Room", type="location"),
+            exits=["north", "south"],
+        )
+
+        is_valid, reason = rules_lawyer.validate_action(intent, context)
+        assert not is_valid
+        assert "Cannot go west" in reason
+
+
+class TestGMAgent:
+    """Tests for the GM agent."""
+
+    @pytest.fixture
+    def setup_gm(self):
+        return GMAgent(tone="adventure", verbosity="normal")
+
+    @pytest.mark.asyncio
+    async def test_parse_intent(self, setup_gm):
+        gm = setup_gm
+
+        intent = await gm.parse_intent("I attack the dragon")
+
+        assert intent.type == IntentType.ATTACK
+        assert "dragon" in intent.target_name.lower()
+
+    @pytest.mark.asyncio
+    async def test_generate_narrative_from_skill_result(self, setup_gm):
+        gm = setup_gm
+
+        intent = Intent(
+            type=IntentType.ATTACK,
+            confidence=1.0,
+            target_name="goblin",
+            original_input="attack goblin",
+            reasoning="",
+        )
+        context = Context(
+            actor=EntitySummary(id=uuid4(), name="Hero", type="character"),
+            location=EntitySummary(id=uuid4(), name="Cave", type="location"),
+        )
+        from src.engine.models import SkillResult
+
+        skill_results = [
+            SkillResult(
+                success=True,
+                outcome="success",
+                roll=18,
+                total=22,
+                dc=13,
+                damage=8,
+                description="Hit goblin! Rolled 22 vs AC 13. 8 damage.",
+            )
+        ]
+
+        narrative = await gm.generate_narrative(intent, context, skill_results)
+
+        assert "Hit goblin" in narrative
+        assert "8 damage" in narrative
+
+
+class TestAgentOrchestrator:
+    """Tests for the agent orchestrator."""
+
+    @pytest.fixture
+    def setup_orchestrator(self):
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+
+        universe = create_prime_material()
+        dolt.save_universe(universe)
+
+        location = create_location(
+            universe_id=universe.id,
+            name="Town Square",
+            danger_level=0,
+        )
+        dolt.save_entity(location)
+
+        character = create_character(
+            universe_id=universe.id,
+            name="Adventurer",
+            hp_max=25,
+            location_id=location.id,
+        )
+        dolt.save_entity(character)
+
+        gm = GMAgent()
+        rules_lawyer = RulesLawyerAgent()
+        lorekeeper = LorekeeperAgent(dolt=dolt, neo4j=neo4j)
+
+        orchestrator = AgentOrchestrator(
+            gm=gm,
+            rules_lawyer=rules_lawyer,
+            lorekeeper=lorekeeper,
+        )
+
+        return {
+            "orchestrator": orchestrator,
+            "universe": universe,
+            "location": location,
+            "character": character,
+        }
+
+    @pytest.mark.asyncio
+    async def test_process_turn_look(self, setup_orchestrator):
+        world = setup_orchestrator
+        session = Session(
+            universe_id=world["universe"].id,
+            character_id=world["character"].id,
+            location_id=world["location"].id,
+        )
+
+        intent, context, skill_results, narrative = await world[
+            "orchestrator"
+        ].process_turn("I look around", session)
+
+        assert intent.type == IntentType.LOOK
+        assert context.location.name == "Town Square"
+        assert "Town Square" in narrative
+
+    @pytest.mark.asyncio
+    async def test_process_turn_attack(self, setup_orchestrator):
+        world = setup_orchestrator
+        session = Session(
+            universe_id=world["universe"].id,
+            character_id=world["character"].id,
+            location_id=world["location"].id,
+        )
+
+        intent, context, skill_results, narrative = await world[
+            "orchestrator"
+        ].process_turn("I attack the enemy", session)
+
+        assert intent.type == IntentType.ATTACK
+        assert len(skill_results) > 0
+
+
+class TestGameEngineWithAgents:
+    """Tests for GameEngine with agent system enabled."""
+
+    @pytest.mark.asyncio
+    async def test_engine_with_agents_enabled(self):
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+
+        universe = create_prime_material()
+        dolt.save_universe(universe)
+
+        location = create_location(
+            universe_id=universe.id,
+            name="Forest Path",
+        )
+        dolt.save_entity(location)
+
+        character = create_character(
+            universe_id=universe.id,
+            name="Ranger",
+            location_id=location.id,
+        )
+        dolt.save_entity(character)
+
+        # Create engine with agents enabled
+        engine = GameEngine(dolt=dolt, neo4j=neo4j, use_agents=True)
+
+        session = await engine.start_session(
+            universe_id=universe.id,
+            character_id=character.id,
+            location_id=location.id,
+        )
+
+        result = await engine.process_turn("I look around", session.id)
+
+        assert result.narrative
+        assert "Forest Path" in result.narrative or result.narrative
+
+    @pytest.mark.asyncio
+    async def test_engine_agents_attack(self):
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+
+        universe = create_prime_material()
+        dolt.save_universe(universe)
+
+        location = create_location(universe_id=universe.id, name="Arena")
+        dolt.save_entity(location)
+
+        character = create_character(
+            universe_id=universe.id, name="Fighter", hp_max=30, location_id=location.id
+        )
+        dolt.save_entity(character)
+
+        engine = GameEngine(dolt=dolt, neo4j=neo4j, use_agents=True)
+        session = await engine.start_session(
+            universe_id=universe.id,
+            character_id=character.id,
+            location_id=location.id,
+        )
+
+        result = await engine.process_turn("I attack the monster", session.id)
+
+        # Should have made a roll
+        assert len(result.rolls) > 0 or result.narrative

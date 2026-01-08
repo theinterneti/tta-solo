@@ -6,10 +6,25 @@ The engine orchestrates:
 - Skill routing (resolving mechanics)
 - Narrative generation (responding to player)
 - Event recording (persisting state)
+
+Phase 3 introduces specialized agents:
+- GM (Game Master): Orchestration and narrative
+- Rules Lawyer: Mechanical enforcement
+- Lorekeeper: Context retrieval
 """
 
 from __future__ import annotations
 
+from src.engine.agents import (
+    Agent,
+    AgentMessage,
+    AgentOrchestrator,
+    AgentRole,
+    GMAgent,
+    LorekeeperAgent,
+    MessageType,
+    RulesLawyerAgent,
+)
 from src.engine.game import GameEngine, NarrativeGenerator, SimpleNarrativeGenerator
 from src.engine.intent import (
     HybridIntentParser,
@@ -35,6 +50,15 @@ from src.engine.router import CheckContext, CombatContext, RestContext, SkillRou
 __all__ = [
     # Main engine
     "GameEngine",
+    # Agents (Phase 3)
+    "Agent",
+    "AgentMessage",
+    "AgentOrchestrator",
+    "AgentRole",
+    "GMAgent",
+    "LorekeeperAgent",
+    "MessageType",
+    "RulesLawyerAgent",
     # Models
     "Context",
     "EngineConfig",

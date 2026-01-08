@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
 from src.db.interfaces import DoltRepository, Neo4jRepository
@@ -28,6 +28,52 @@ from src.engine.models import (
 )
 from src.engine.router import SkillRouter
 from src.models import Entity, Event, EventOutcome, EventType, RelationshipType
+
+if TYPE_CHECKING:
+    from src.engine.agents import (
+        AgentOrchestrator as AgentOrchestratorType,
+    )
+    from src.engine.agents import (
+        GMAgent as GMAgentType,
+    )
+    from src.engine.agents import (
+        LorekeeperAgent as LorekeeperAgentType,
+    )
+    from src.engine.agents import (
+        RulesLawyerAgent as RulesLawyerAgentType,
+    )
+
+# Module-level agent classes (lazy loaded)
+_AgentOrchestrator: type[AgentOrchestratorType] | None = None
+_GMAgent: type[GMAgentType] | None = None
+_RulesLawyerAgent: type[RulesLawyerAgentType] | None = None
+_LorekeeperAgent: type[LorekeeperAgentType] | None = None
+
+
+def _import_agents() -> (
+    tuple[
+        type[AgentOrchestratorType],
+        type[GMAgentType],
+        type[RulesLawyerAgentType],
+        type[LorekeeperAgentType],
+    ]
+):
+    """Lazy import of agents to avoid circular imports."""
+    global _AgentOrchestrator, _GMAgent, _RulesLawyerAgent, _LorekeeperAgent
+    if _AgentOrchestrator is None:
+        from src.engine.agents import (
+            AgentOrchestrator,
+            GMAgent,
+            LorekeeperAgent,
+            RulesLawyerAgent,
+        )
+
+        _AgentOrchestrator = AgentOrchestrator
+        _GMAgent = GMAgent
+        _RulesLawyerAgent = RulesLawyerAgent
+        _LorekeeperAgent = LorekeeperAgent
+
+    return _AgentOrchestrator, _GMAgent, _RulesLawyerAgent, _LorekeeperAgent  # type: ignore
 
 
 class NarrativeGenerator(Protocol):
@@ -99,16 +145,25 @@ class GameEngine:
     - Skill execution (resolving mechanics)
     - Event recording (persisting changes)
     - Narrative generation (responding to player)
+
+    Phase 3: Can use specialized agents via `use_agents=True`:
+    - GM Agent: Orchestration and narrative
+    - Rules Lawyer Agent: Mechanical enforcement
+    - Lorekeeper Agent: Context retrieval
     """
 
     dolt: DoltRepository
     neo4j: Neo4jRepository
     config: EngineConfig = field(default_factory=EngineConfig)
+    use_agents: bool = False  # Enable Phase 3 agent system
 
     # Components (initialized in __post_init__)
     intent_parser: HybridIntentParser = field(init=False)
     router: SkillRouter = field(init=False)
     narrator: NarrativeGenerator = field(init=False)
+
+    # Agent system (Phase 3)
+    _orchestrator: AgentOrchestratorType | None = field(init=False, default=None)
 
     # Session tracking
     _sessions: dict[UUID, Session] = field(default_factory=dict)
@@ -122,9 +177,38 @@ class GameEngine:
             verbosity=self.config.verbosity,
         )
 
+        # Initialize agent system if enabled
+        if self.use_agents:
+            self._init_agents()
+
+    def _init_agents(self) -> None:
+        """Initialize the agent system (Phase 3)."""
+        orchestrator_cls, gm_cls, rules_lawyer_cls, lorekeeper_cls = _import_agents()
+
+        gm = gm_cls(
+            tone=self.config.tone,
+            verbosity=self.config.verbosity,
+        )
+        rules_lawyer = rules_lawyer_cls(router=self.router)
+        lorekeeper = lorekeeper_cls(
+            dolt=self.dolt,
+            neo4j=self.neo4j,
+            max_nearby_entities=self.config.max_nearby_entities,
+            max_recent_events=self.config.max_recent_events,
+        )
+
+        self._orchestrator = orchestrator_cls(
+            gm=gm,
+            rules_lawyer=rules_lawyer,
+            lorekeeper=lorekeeper,
+        )
+
     def set_llm_provider(self, provider: LLMProvider) -> None:
         """Set the LLM provider for intent parsing."""
         self.intent_parser = HybridIntentParser(llm_provider=provider)
+        # Also update agent if using agent system
+        if self._orchestrator is not None:
+            self._orchestrator.gm.intent_parser = HybridIntentParser(llm_provider=provider)
 
     def set_narrative_generator(self, generator: NarrativeGenerator) -> None:
         """Set a custom narrative generator."""
@@ -212,32 +296,43 @@ class GameEngine:
         )
 
         try:
-            # Phase 1: Parse intent
-            turn.intent = await self.intent_parser.parse(player_input)
+            # Use agent system if enabled (Phase 3)
+            if self.use_agents and self._orchestrator is not None:
+                intent, context, skill_results, narrative = await self._orchestrator.process_turn(
+                    player_input, session
+                )
+                turn.intent = intent
+                turn.context = context
+                turn.skill_results = skill_results
+                turn.narrative = narrative
+            else:
+                # Direct processing (Phase 1/2)
+                # Phase 1: Parse intent
+                turn.intent = await self.intent_parser.parse(player_input)
 
-            # Phase 2: Get context
-            turn.context = await self._get_context(session)
+                # Phase 2: Get context
+                turn.context = await self._get_context(session)
 
-            # Phase 3: Resolve mechanics
-            if turn.intent.type != IntentType.UNCLEAR:
-                skill_result = self.router.resolve(turn.intent, turn.context)
-                turn.skill_results.append(skill_result)
+                # Phase 3: Resolve mechanics
+                if turn.intent.type != IntentType.UNCLEAR:
+                    skill_result = self.router.resolve(turn.intent, turn.context)
+                    turn.skill_results.append(skill_result)
 
-                # Update location if movement succeeded
-                if turn.intent.type == IntentType.MOVE and skill_result.success:
-                    # In a real implementation, we'd resolve the destination
-                    # to an actual location ID
-                    pass
+                    # Update location if movement succeeded
+                    if turn.intent.type == IntentType.MOVE and skill_result.success:
+                        # In a real implementation, we'd resolve the destination
+                        # to an actual location ID
+                        pass
 
-            # Phase 4: Record events
+                # Phase 5: Generate narrative
+                turn.narrative = await self.narrator.generate(
+                    turn.intent,
+                    turn.context,
+                    turn.skill_results,
+                )
+
+            # Phase 4: Record events (always done by engine)
             await self._record_events(turn, session)
-
-            # Phase 5: Generate narrative
-            turn.narrative = await self.narrator.generate(
-                turn.intent,
-                turn.context,
-                turn.skill_results,
-            )
 
         except Exception as e:
             turn.error = str(e)
