@@ -11,8 +11,12 @@ from src.models import (
     EventType,
     UniverseStatus,
     create_character,
+    create_location,
 )
-from src.services.multiverse import MultiverseService
+from src.services.multiverse import (
+    MergeProposalStatus,
+    MultiverseService,
+)
 
 
 @pytest.fixture
@@ -373,3 +377,320 @@ class TestUniverseLineage:
         assert len(lineage) == 4  # Prime + 3 forks
         assert lineage[0].is_prime_material()
         assert lineage[-1].depth == 3
+
+
+class TestMergeProposals:
+    """Tests for the merge/PR system (Phase 5)."""
+
+    def test_propose_merge_creates_proposal(self, multiverse_service: MultiverseService):
+        """Creating a merge proposal should store it."""
+        prime = multiverse_service.initialize_prime_material()
+
+        # Create a fork with some content
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Adding new content",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Create an NPC in the fork
+        npc = create_character(universe_id=fork.universe.id, name="Cool NPC")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(npc)
+
+        # Propose merging the NPC to prime
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc.id],
+            title="Add Cool NPC",
+            description="This NPC adds great value to the world",
+            submitter_id=uuid4(),
+        )
+
+        assert proposal is not None
+        assert proposal.status == MergeProposalStatus.PENDING
+        assert proposal.validation_passed
+        assert len(proposal.conflicts) == 0
+
+    def test_propose_merge_detects_missing_source(self, multiverse_service: MultiverseService):
+        """Proposal should fail if source universe doesn't exist."""
+        prime = multiverse_service.initialize_prime_material()
+
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=uuid4(),  # Non-existent
+            target_universe_id=prime.id,
+            entity_ids=[uuid4()],
+            title="Bad Proposal",
+            description="This should fail",
+        )
+
+        assert proposal.status == MergeProposalStatus.CONFLICT
+        assert not proposal.validation_passed
+        assert len(proposal.conflicts) > 0
+
+    def test_propose_merge_detects_missing_entity(self, multiverse_service: MultiverseService):
+        """Proposal should detect missing entities in source."""
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Empty Fork",
+            fork_reason="Testing",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Propose merging a non-existent entity
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[uuid4()],  # Doesn't exist
+            title="Missing Entity",
+            description="This should have conflicts",
+        )
+
+        assert proposal.status == MergeProposalStatus.CONFLICT
+        assert "not found in source universe" in proposal.conflicts[0]
+
+    def test_review_proposal_approves(self, multiverse_service: MultiverseService):
+        """Reviewing and approving a valid proposal should work."""
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Adding content",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        location = create_location(universe_id=fork.universe.id, name="New Tavern")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(location)
+
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[location.id],
+            title="Add Tavern",
+            description="Great location",
+        )
+
+        reviewer_id = uuid4()
+        reviewed = multiverse_service.review_proposal(
+            proposal_id=proposal.id,
+            approved=True,
+            reviewer_id=reviewer_id,
+            review_notes="Looks good!",
+        )
+
+        assert reviewed is not None
+        assert reviewed.status == MergeProposalStatus.APPROVED
+        assert reviewed.reviewer_id == reviewer_id
+        assert reviewed.review_notes == "Looks good!"
+        assert reviewed.reviewed_at is not None
+
+    def test_review_proposal_rejects(self, multiverse_service: MultiverseService):
+        """Rejecting a proposal should set status to rejected."""
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Testing",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        npc = create_character(universe_id=fork.universe.id, name="Bad NPC")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(npc)
+
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc.id],
+            title="Bad Content",
+            description="Not good",
+        )
+
+        reviewed = multiverse_service.review_proposal(
+            proposal_id=proposal.id,
+            approved=False,
+            reviewer_id=uuid4(),
+            review_notes="Does not fit the world",
+        )
+
+        assert reviewed.status == MergeProposalStatus.REJECTED
+
+    def test_execute_merge_copies_entities(self, multiverse_service: MultiverseService):
+        """Executing a merge should copy entities to target."""
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Adding content",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Create content in fork
+        npc = create_character(universe_id=fork.universe.id, name="Merged NPC")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(npc)
+
+        # Propose and approve
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc.id],
+            title="Add NPC",
+            description="Great NPC",
+        )
+
+        multiverse_service.review_proposal(
+            proposal_id=proposal.id,
+            approved=True,
+            reviewer_id=uuid4(),
+        )
+
+        # Execute the merge
+        result = multiverse_service.execute_merge(proposal.id)
+
+        assert result.success
+        assert result.entities_merged == 1
+        assert "Merged NPC" in result.narrative
+
+        # Verify the proposal is now merged
+        updated = multiverse_service.get_proposal(proposal.id)
+        assert updated.status == MergeProposalStatus.MERGED
+        assert updated.merged_at is not None
+
+    def test_execute_merge_not_approved_fails(self, multiverse_service: MultiverseService):
+        """Cannot execute a merge that isn't approved."""
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Testing",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        npc = create_character(universe_id=fork.universe.id, name="Test NPC")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(npc)
+
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc.id],
+            title="Not Approved",
+            description="Testing",
+        )
+
+        # Try to execute without approval
+        result = multiverse_service.execute_merge(proposal.id)
+
+        assert not result.success
+        assert "not approved" in result.error
+
+    def test_get_pending_proposals(self, multiverse_service: MultiverseService):
+        """Should return all pending proposals."""
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Testing",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Create two proposals
+        npc1 = create_character(universe_id=fork.universe.id, name="NPC 1")
+        npc2 = create_character(universe_id=fork.universe.id, name="NPC 2")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(npc1)
+        multiverse_service.dolt.save_entity(npc2)
+
+        multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc1.id],
+            title="Proposal 1",
+            description="First",
+        )
+
+        multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc2.id],
+            title="Proposal 2",
+            description="Second",
+        )
+
+        pending = multiverse_service.get_pending_proposals()
+        assert len(pending) == 2
+
+        # Filter by target
+        pending_prime = multiverse_service.get_pending_proposals(target_universe_id=prime.id)
+        assert len(pending_prime) == 2
+
+    def test_full_merge_workflow(self, multiverse_service: MultiverseService):
+        """Test complete workflow: create, review, merge."""
+        # Setup prime material
+        prime = multiverse_service.initialize_prime_material()
+
+        # Player forks and creates content
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Campaign",
+            fork_reason="Personal adventure",
+            player_id=uuid4(),
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Player creates a cool location
+        tavern = create_location(
+            universe_id=fork.universe.id,
+            name="The Rusty Dragon Inn",
+        )
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(tavern)
+
+        # Player submits for canon
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[tavern.id],
+            title="Add The Rusty Dragon Inn",
+            description="A beloved tavern that should be in the main world",
+            submitter_id=uuid4(),
+        )
+        assert proposal.validation_passed
+
+        # Admin reviews and approves
+        multiverse_service.review_proposal(
+            proposal_id=proposal.id,
+            approved=True,
+            reviewer_id=uuid4(),
+            review_notes="Great addition to the world!",
+        )
+
+        # Execute the merge
+        result = multiverse_service.execute_merge(proposal.id)
+
+        assert result.success
+        assert result.entities_merged == 1
+        assert "Rusty Dragon" in result.narrative
+
+        # Verify it's no longer pending
+        pending = multiverse_service.get_pending_proposals()
+        assert len(pending) == 0
