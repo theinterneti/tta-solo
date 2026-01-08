@@ -600,7 +600,7 @@ class MultiverseService:
         if entities_merged == 0:
             outcome = EventOutcome.FAILURE
             narrative_summary = "Merge failed: no entities were successfully merged"
-        elif entities_skipped > 0:
+        elif entities_merged > 0 and entities_skipped > 0:
             outcome = EventOutcome.PARTIAL
             narrative_summary = (
                 f"Partial merge: {entities_merged} entities merged, "
