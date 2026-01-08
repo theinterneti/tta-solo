@@ -43,6 +43,16 @@ from src.skills.economy import (
     execute_purchase,
     execute_sale,
 )
+from src.skills.rest import (
+    CharacterResources,
+    HitDice,
+    LongRestResult,
+    ShortRestResult,
+    SpellSlots,
+    spend_hit_die,
+    take_long_rest,
+    take_short_rest,
+)
 
 __all__ = [
     # Dice
@@ -78,4 +88,13 @@ __all__ = [
     "calculate_buy_price",
     "calculate_sell_price",
     "convert_currency",
+    # Rest & Recovery
+    "CharacterResources",
+    "HitDice",
+    "SpellSlots",
+    "ShortRestResult",
+    "LongRestResult",
+    "take_short_rest",
+    "take_long_rest",
+    "spend_hit_die",
 ]
