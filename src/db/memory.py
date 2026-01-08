@@ -160,6 +160,22 @@ class InMemoryDoltRepository:
 
         return [deepcopy(e) for e in universe_events[since_index + 1 :]]
 
+    def get_events_at_location(
+        self,
+        universe_id: UUID,
+        location_id: UUID,
+        limit: int = 100,
+    ) -> list[Event]:
+        """Get events that occurred at a specific location."""
+        branch_events = self._events.get(self._current_branch, [])
+        location_events = [
+            e
+            for e in branch_events
+            if e.universe_id == universe_id and e.location_id == location_id
+        ]
+        location_events.sort(key=lambda e: e.timestamp, reverse=True)
+        return [deepcopy(e) for e in location_events[:limit]]
+
 
 class InMemoryNeo4jRepository:
     """

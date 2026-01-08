@@ -20,7 +20,14 @@ from src.engine import (
     SkillRouter,
     TurnResult,
 )
-from src.models import create_character, create_location, create_prime_material
+from src.models import (
+    Relationship,
+    RelationshipType,
+    create_character,
+    create_item,
+    create_location,
+    create_prime_material,
+)
 
 # --- Intent Parser Tests ---
 
@@ -469,3 +476,268 @@ class TestEngineIntegration:
 
         # Verify state
         assert session.turn_count == 3
+
+
+# --- Context Retrieval Tests (Phase 2) ---
+
+
+class TestContextRetrieval:
+    """Tests for enhanced context retrieval."""
+
+    @pytest.fixture
+    def setup_world(self):
+        """Set up a world with relationships for context testing."""
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+
+        # Create universe
+        universe = create_prime_material()
+        dolt.save_universe(universe)
+
+        # Create locations
+        tavern = create_location(
+            universe_id=universe.id,
+            name="The Rusty Dragon",
+            description="A cozy tavern with a roaring fireplace.",
+            danger_level=0,
+        )
+        dolt.save_entity(tavern)
+
+        forest = create_location(
+            universe_id=universe.id,
+            name="Dark Forest",
+            description="A foreboding forest.",
+            danger_level=5,
+        )
+        dolt.save_entity(forest)
+
+        # Create CONNECTED_TO relationship between locations
+        connection = Relationship(
+            universe_id=universe.id,
+            relationship_type=RelationshipType.CONNECTED_TO,
+            from_entity_id=tavern.id,
+            to_entity_id=forest.id,
+            description="north",
+        )
+        neo4j.create_relationship(connection)
+
+        # Create character
+        hero = create_character(
+            universe_id=universe.id,
+            name="Valeros",
+            hp_max=30,
+            ac=16,
+            location_id=tavern.id,
+        )
+        dolt.save_entity(hero)
+
+        # Create NPC in tavern
+        barkeep = create_character(
+            universe_id=universe.id,
+            name="Ameiko",
+            hp_max=15,
+            location_id=tavern.id,
+        )
+        dolt.save_entity(barkeep)
+
+        # Register NPC as LOCATED_IN tavern
+        located_in = Relationship(
+            universe_id=universe.id,
+            relationship_type=RelationshipType.LOCATED_IN,
+            from_entity_id=barkeep.id,
+            to_entity_id=tavern.id,
+        )
+        neo4j.create_relationship(located_in)
+
+        # Create item for inventory
+        sword = create_item(
+            universe_id=universe.id,
+            name="Longsword",
+            description="A well-balanced blade.",
+        )
+        dolt.save_entity(sword)
+
+        # Hero CARRIES sword
+        carries = Relationship(
+            universe_id=universe.id,
+            relationship_type=RelationshipType.CARRIES,
+            from_entity_id=hero.id,
+            to_entity_id=sword.id,
+        )
+        neo4j.create_relationship(carries)
+
+        # Hero KNOWS barkeep
+        knows = Relationship(
+            universe_id=universe.id,
+            relationship_type=RelationshipType.KNOWS,
+            from_entity_id=hero.id,
+            to_entity_id=barkeep.id,
+            trust=0.8,
+            description="A trusted friend.",
+        )
+        neo4j.create_relationship(knows)
+
+        # Add atmosphere to tavern
+        atmosphere = Relationship(
+            universe_id=universe.id,
+            relationship_type=RelationshipType.HAS_ATMOSPHERE,
+            from_entity_id=tavern.id,
+            to_entity_id=tavern.id,  # Self-reference for mood
+            description="warm and welcoming",
+        )
+        neo4j.create_relationship(atmosphere)
+
+        return {
+            "dolt": dolt,
+            "neo4j": neo4j,
+            "universe": universe,
+            "tavern": tavern,
+            "forest": forest,
+            "hero": hero,
+            "barkeep": barkeep,
+            "sword": sword,
+        }
+
+    @pytest.mark.asyncio
+    async def test_context_includes_inventory(self, setup_world):
+        """Test that context includes actor's inventory."""
+        world = setup_world
+        engine = GameEngine(dolt=world["dolt"], neo4j=world["neo4j"])
+
+        session = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["tavern"].id,
+        )
+
+        context = await engine._get_context(session)
+
+        assert len(context.actor_inventory) == 1
+        assert context.actor_inventory[0].name == "Longsword"
+
+    @pytest.mark.asyncio
+    async def test_context_includes_exits(self, setup_world):
+        """Test that context includes location exits."""
+        world = setup_world
+        engine = GameEngine(dolt=world["dolt"], neo4j=world["neo4j"])
+
+        session = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["tavern"].id,
+        )
+
+        context = await engine._get_context(session)
+
+        assert len(context.exits) == 1
+        assert context.exits[0] == "north"
+
+    @pytest.mark.asyncio
+    async def test_context_includes_known_entities(self, setup_world):
+        """Test that context includes actor's relationships."""
+        world = setup_world
+        engine = GameEngine(dolt=world["dolt"], neo4j=world["neo4j"])
+
+        session = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["tavern"].id,
+        )
+
+        context = await engine._get_context(session)
+
+        assert len(context.known_entities) == 1
+        assert context.known_entities[0].entity.name == "Ameiko"
+        assert context.known_entities[0].relationship_type == "KNOWS"
+        assert context.known_entities[0].trust == 0.8
+
+    @pytest.mark.asyncio
+    async def test_context_includes_entities_present(self, setup_world):
+        """Test that context includes entities at the location."""
+        world = setup_world
+        engine = GameEngine(dolt=world["dolt"], neo4j=world["neo4j"])
+
+        session = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["tavern"].id,
+        )
+
+        context = await engine._get_context(session)
+
+        assert len(context.entities_present) == 1
+        assert context.entities_present[0].name == "Ameiko"
+
+    @pytest.mark.asyncio
+    async def test_context_includes_mood(self, setup_world):
+        """Test that context includes location mood/atmosphere."""
+        world = setup_world
+        engine = GameEngine(dolt=world["dolt"], neo4j=world["neo4j"])
+
+        session = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["tavern"].id,
+        )
+
+        context = await engine._get_context(session)
+
+        assert context.mood == "warm and welcoming"
+
+    @pytest.mark.asyncio
+    async def test_context_includes_danger_level(self, setup_world):
+        """Test that context includes location danger level."""
+        world = setup_world
+        engine = GameEngine(dolt=world["dolt"], neo4j=world["neo4j"])
+
+        # Test safe location
+        session1 = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["tavern"].id,
+        )
+        context1 = await engine._get_context(session1)
+        assert context1.danger_level == 0
+
+        # Test dangerous location
+        session2 = await engine.start_session(
+            universe_id=world["universe"].id,
+            character_id=world["hero"].id,
+            location_id=world["forest"].id,
+        )
+        context2 = await engine._get_context(session2)
+        assert context2.danger_level == 5
+
+    @pytest.mark.asyncio
+    async def test_context_with_empty_relationships(self):
+        """Test context when actor has no relationships."""
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+
+        universe = create_prime_material()
+        dolt.save_universe(universe)
+
+        location = create_location(universe_id=universe.id, name="Empty Room")
+        dolt.save_entity(location)
+
+        character = create_character(
+            universe_id=universe.id, name="Loner", location_id=location.id
+        )
+        dolt.save_entity(character)
+
+        engine = GameEngine(dolt=dolt, neo4j=neo4j)
+        session = await engine.start_session(
+            universe_id=universe.id,
+            character_id=character.id,
+            location_id=location.id,
+        )
+
+        context = await engine._get_context(session)
+
+        assert context.actor.name == "Loner"
+        assert context.location.name == "Empty Room"
+        assert context.actor_inventory == []
+        assert context.exits == []
+        assert context.known_entities == []
+        assert context.entities_present == []
+        assert context.mood is None

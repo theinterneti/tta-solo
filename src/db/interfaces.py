@@ -90,6 +90,15 @@ class DoltRepository(Protocol):
         """Get all events after a specific event."""
         ...
 
+    def get_events_at_location(
+        self,
+        universe_id: UUID,
+        location_id: UUID,
+        limit: int = 100,
+    ) -> list[Event]:
+        """Get events that occurred at a specific location."""
+        ...
+
 
 class Neo4jRepository(Protocol):
     """

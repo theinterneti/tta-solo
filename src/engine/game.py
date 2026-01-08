@@ -20,13 +20,14 @@ from src.engine.models import (
     EntitySummary,
     Intent,
     IntentType,
+    RelationshipSummary,
     Session,
     SkillResult,
     Turn,
     TurnResult,
 )
 from src.engine.router import SkillRouter
-from src.models import Entity, Event, EventOutcome, EventType
+from src.models import Entity, Event, EventOutcome, EventType, RelationshipType
 
 
 class NarrativeGenerator(Protocol):
@@ -263,8 +264,18 @@ class GameEngine:
         )
 
     async def _get_context(self, session: Session) -> Context:
-        """Build context for the current turn."""
-        # Get actor
+        """
+        Build context for the current turn.
+
+        Context Query Flow (per spec):
+        1. Get actor from Dolt (by actor_id)
+        2. Get location from Dolt (by location_id)
+        3. Query Neo4j: entities LOCATED_IN location
+        4. Query Neo4j: actor's relationships (KNOWS, FEARS, etc.)
+        5. Query Dolt: recent events at this location
+        6. Query Neo4j: location atmosphere/mood
+        """
+        # 1. Get actor
         actor_entity = self.dolt.get_entity(session.character_id, session.universe_id)
         if actor_entity:
             actor = self._entity_to_summary(actor_entity)
@@ -275,7 +286,7 @@ class GameEngine:
                 type="character",
             )
 
-        # Get location
+        # 2. Get location
         location_entity = self.dolt.get_entity(session.location_id, session.universe_id)
         if location_entity:
             location = self._entity_to_summary(location_entity)
@@ -286,34 +297,143 @@ class GameEngine:
                 type="location",
             )
 
-        # Get entities in location
+        # 3. Get entities in location (LOCATED_IN relationships pointing to this location)
         entities_present = []
-        relationships = self.neo4j.get_relationships(
+        located_in_rels = self.neo4j.get_relationships(
             session.location_id,
             session.universe_id,
             relationship_type="LOCATED_IN",
         )
-        for rel in relationships[:self.config.max_nearby_entities]:
+        for rel in located_in_rels[: self.config.max_nearby_entities]:
             entity = self.dolt.get_entity(rel.from_entity_id, session.universe_id)
             if entity and entity.id != session.character_id:
                 entities_present.append(self._entity_to_summary(entity))
 
-        # Get recent events
-        recent_events = self.dolt.get_events(
+        # Get actor inventory (CARRIES, WIELDS, WEARS relationships)
+        actor_inventory = await self._get_actor_inventory(session)
+
+        # Get location exits (CONNECTED_TO relationships)
+        exits = await self._get_location_exits(session)
+
+        # 4. Get actor's relationships (KNOWS, FEARS, etc.)
+        known_entities = await self._get_actor_relationships(session)
+
+        # 5. Get recent events at this location
+        recent_events = self.dolt.get_events_at_location(
             session.universe_id,
+            session.location_id,
             limit=self.config.max_recent_events,
         )
         event_summaries = [e.narrative_summary for e in recent_events if e.narrative_summary]
 
+        # 6. Get location mood/atmosphere
+        mood = await self._get_location_mood(session)
+
+        # Get danger level
+        danger_level = 0
+        if location_entity and location_entity.location_properties:
+            danger_level = location_entity.location_properties.danger_level
+
         return Context(
             actor=actor,
+            actor_inventory=actor_inventory,
             location=location,
             entities_present=entities_present,
+            exits=exits,
+            known_entities=known_entities,
             recent_events=event_summaries,
-            danger_level=location_entity.location_properties.danger_level
-            if location_entity and location_entity.location_properties
-            else 0,
+            mood=mood,
+            danger_level=danger_level,
         )
+
+    async def _get_actor_inventory(self, session: Session) -> list[EntitySummary]:
+        """Get items the actor is carrying, wielding, or wearing."""
+        inventory = []
+        inventory_rel_types = ["CARRIES", "WIELDS", "WEARS"]
+
+        for rel_type in inventory_rel_types:
+            rels = self.neo4j.get_relationships(
+                session.character_id,
+                session.universe_id,
+                relationship_type=rel_type,
+            )
+            for rel in rels:
+                # Actor is from_entity, item is to_entity
+                item = self.dolt.get_entity(rel.to_entity_id, session.universe_id)
+                if item:
+                    inventory.append(self._entity_to_summary(item))
+
+        return inventory
+
+    async def _get_location_exits(self, session: Session) -> list[str]:
+        """Get available exits from the current location."""
+        exits = []
+        connected_rels = self.neo4j.get_relationships(
+            session.location_id,
+            session.universe_id,
+            relationship_type="CONNECTED_TO",
+        )
+        for rel in connected_rels:
+            # Get the connected location
+            connected_location = self.dolt.get_entity(
+                rel.to_entity_id, session.universe_id
+            )
+            if connected_location:
+                # Use description as exit name if available, otherwise use location name
+                exit_name = rel.description if rel.description else connected_location.name
+                exits.append(exit_name)
+
+        return exits
+
+    async def _get_actor_relationships(self, session: Session) -> list[RelationshipSummary]:
+        """Get actor's relationships with other entities (KNOWS, FEARS, etc.)."""
+        known_entities = []
+        relationship_types = [
+            RelationshipType.KNOWS,
+            RelationshipType.FEARS,
+            RelationshipType.ALLIED_WITH,
+            RelationshipType.HOSTILE_TO,
+            RelationshipType.LOVES,
+            RelationshipType.HATES,
+            RelationshipType.RESPECTS,
+            RelationshipType.DISTRUSTS,
+        ]
+
+        for rel_type in relationship_types:
+            rels = self.neo4j.get_relationships(
+                session.character_id,
+                session.universe_id,
+                relationship_type=rel_type.value,
+            )
+            for rel in rels:
+                # Get the related entity
+                related_entity = self.dolt.get_entity(
+                    rel.to_entity_id, session.universe_id
+                )
+                if related_entity:
+                    known_entities.append(
+                        RelationshipSummary(
+                            entity=self._entity_to_summary(related_entity),
+                            relationship_type=rel.relationship_type.value,
+                            strength=rel.strength,
+                            trust=rel.trust,
+                            description=rel.description,
+                        )
+                    )
+
+        return known_entities
+
+    async def _get_location_mood(self, session: Session) -> str | None:
+        """Get the mood/atmosphere of the current location."""
+        atmosphere_rels = self.neo4j.get_relationships(
+            session.location_id,
+            session.universe_id,
+            relationship_type="HAS_ATMOSPHERE",
+        )
+        if atmosphere_rels:
+            # Return the description of the first atmosphere relationship
+            return atmosphere_rels[0].description or None
+        return None
 
     def _entity_to_summary(self, entity: Entity) -> EntitySummary:
         """Convert Entity to lightweight EntitySummary."""

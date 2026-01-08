@@ -130,6 +130,16 @@ class EntitySummary(BaseModel):
     ac: int | None = None
 
 
+class RelationshipSummary(BaseModel):
+    """Lightweight relationship info for context."""
+
+    entity: EntitySummary
+    relationship_type: str
+    strength: float = 1.0
+    trust: float | None = None
+    description: str = ""
+
+
 class Context(BaseModel):
     """World context for a turn."""
 
@@ -141,6 +151,11 @@ class Context(BaseModel):
     location: EntitySummary
     entities_present: list[EntitySummary] = Field(default_factory=list)
     exits: list[str] = Field(default_factory=list)
+
+    # Relationships - entities the actor knows/has relationships with
+    known_entities: list[RelationshipSummary] = Field(
+        default_factory=list, description="Actor's relationships with other entities"
+    )
 
     # Recent history
     recent_events: list[str] = Field(
