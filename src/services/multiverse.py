@@ -8,7 +8,7 @@ Implements the "Git for Fiction" concept from the multiverse spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -274,8 +274,8 @@ class MultiverseService:
         traveler_copy.id = uuid4()
         traveler_copy.universe_id = destination_universe_id
         traveler_copy.current_location_id = None  # Must find new location
-        traveler_copy.created_at = datetime.utcnow()
-        traveler_copy.updated_at = datetime.utcnow()
+        traveler_copy.created_at = datetime.now(UTC)
+        traveler_copy.updated_at = datetime.now(UTC)
 
         # Save the copy in the destination
         self.dolt.checkout_branch(destination.dolt_branch)
@@ -332,7 +332,7 @@ class MultiverseService:
             return False  # Cannot archive Prime Material
 
         universe.status = UniverseStatus.ARCHIVED
-        universe.updated_at = datetime.utcnow()
+        universe.updated_at = datetime.now(UTC)
 
         self.dolt.checkout_branch(universe.dolt_branch)
         self.dolt.save_universe(universe)
@@ -512,7 +512,7 @@ class MultiverseService:
 
         proposal.reviewer_id = reviewer_id
         proposal.review_notes = review_notes
-        proposal.reviewed_at = datetime.utcnow()
+        proposal.reviewed_at = datetime.now(UTC)
 
         if approved:
             if proposal.validation_passed:
@@ -580,8 +580,8 @@ class MultiverseService:
             merged_entity = entity.model_copy(deep=True)
             merged_entity.id = uuid4()  # New ID in target
             merged_entity.universe_id = proposal.target_universe_id
-            merged_entity.created_at = datetime.utcnow()
-            merged_entity.updated_at = datetime.utcnow()
+            merged_entity.created_at = datetime.now(UTC)
+            merged_entity.updated_at = datetime.now(UTC)
 
             # Save to target
             self.dolt.checkout_branch(target.dolt_branch)
@@ -616,7 +616,7 @@ class MultiverseService:
 
         # Update proposal status
         proposal.status = MergeProposalStatus.MERGED
-        proposal.merged_at = datetime.utcnow()
+        proposal.merged_at = datetime.now(UTC)
 
         return MergeResult(
             success=True,
