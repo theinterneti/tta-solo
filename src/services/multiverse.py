@@ -476,13 +476,16 @@ class MultiverseService:
             else:
                 # Check for name conflicts in target
                 self.dolt.checkout_branch(target.dolt_branch)
-                # In a real implementation, we'd check if an entity with the
-                # same name already exists in the target
-                existing = self.dolt.get_entity(entity_id, proposal.target_universe_id)
-                if existing is not None:
-                    conflicts.append(
-                        f"Entity '{entity.name}' already exists in target universe"
-                    )
+                # Check if an entity with the same name already exists in the target
+                target_entities = self.dolt.get_entities_by_type(
+                    entity.type.value, proposal.target_universe_id
+                )
+                for target_entity in target_entities:
+                    if target_entity.name == entity.name:
+                        conflicts.append(
+                            f"Entity '{entity.name}' already exists in target universe"
+                        )
+                        break
                 self.dolt.checkout_branch(source.dolt_branch)
 
         return conflicts
