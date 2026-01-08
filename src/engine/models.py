@@ -1,0 +1,230 @@
+"""
+Engine Data Models for TTA-Solo.
+
+Defines the core data structures for the game loop:
+- Intent: Parsed player action
+- Context: World state for a turn
+- TurnResult: Response to the player
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, Field
+
+
+class IntentType(str, Enum):
+    """Categories of player intent."""
+
+    # Combat
+    ATTACK = "attack"
+    CAST_SPELL = "cast_spell"
+    USE_ABILITY = "use_ability"
+
+    # Social
+    TALK = "talk"
+    PERSUADE = "persuade"
+    INTIMIDATE = "intimidate"
+    DECEIVE = "deceive"
+
+    # Exploration
+    MOVE = "move"
+    LOOK = "look"
+    SEARCH = "search"
+    INTERACT = "interact"
+
+    # Items
+    USE_ITEM = "use_item"
+    PICK_UP = "pick_up"
+    DROP = "drop"
+    GIVE = "give"
+
+    # Meta
+    REST = "rest"
+    WAIT = "wait"
+    ASK_QUESTION = "ask_question"
+
+    # Special
+    FORK = "fork"
+    UNCLEAR = "unclear"
+
+
+class Intent(BaseModel):
+    """Parsed player intent."""
+
+    type: IntentType
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the parse")
+
+    # Target extraction
+    target_name: str | None = Field(default=None, description="Target name from input")
+    target_id: UUID | None = Field(default=None, description="Resolved entity ID")
+
+    # Action details
+    method: str | None = Field(default=None, description="How to perform action")
+    dialogue: str | None = Field(default=None, description="What to say (TALK)")
+    destination: str | None = Field(default=None, description="Where to go (MOVE)")
+
+    # Raw input
+    original_input: str = Field(description="The player's original input")
+    reasoning: str = Field(default="", description="Why this intent was chosen")
+
+
+class RollSummary(BaseModel):
+    """Summary of a dice roll for display."""
+
+    description: str = Field(description="What was rolled for")
+    roll: int = Field(description="The natural roll")
+    modifier: int = Field(default=0, description="Total modifier")
+    total: int = Field(description="Final result")
+    success: bool | None = Field(default=None, description="Pass/fail if applicable")
+    is_critical: bool = Field(default=False)
+    is_fumble: bool = Field(default=False)
+
+
+class SkillResult(BaseModel):
+    """Result of executing a skill."""
+
+    success: bool
+    outcome: str = Field(description="success, failure, critical_success, etc.")
+
+    # Dice
+    roll: int | None = None
+    total: int | None = None
+    dc: int | None = None
+
+    # Effects
+    damage: int | None = None
+    healing: int | None = None
+    conditions: list[str] = Field(default_factory=list)
+
+    # For narrative
+    description: str = Field(default="", description="Human-readable result")
+    is_critical: bool = False
+    is_fumble: bool = False
+
+    def to_roll_summary(self, label: str = "Roll") -> RollSummary:
+        """Convert to a RollSummary for display."""
+        return RollSummary(
+            description=label,
+            roll=self.roll or 0,
+            modifier=(self.total or 0) - (self.roll or 0),
+            total=self.total or self.roll or 0,
+            success=self.success,
+            is_critical=self.is_critical,
+            is_fumble=self.is_fumble,
+        )
+
+
+class EntitySummary(BaseModel):
+    """Lightweight entity info for context."""
+
+    id: UUID
+    name: str
+    type: str
+    description: str = ""
+    hp_current: int | None = None
+    hp_max: int | None = None
+    ac: int | None = None
+
+
+class Context(BaseModel):
+    """World context for a turn."""
+
+    # Actor state
+    actor: EntitySummary
+    actor_inventory: list[EntitySummary] = Field(default_factory=list)
+
+    # Location
+    location: EntitySummary
+    entities_present: list[EntitySummary] = Field(default_factory=list)
+    exits: list[str] = Field(default_factory=list)
+
+    # Recent history
+    recent_events: list[str] = Field(
+        default_factory=list, description="Recent event summaries"
+    )
+
+    # Atmosphere
+    mood: str | None = None
+    danger_level: int = Field(default=0, ge=0, le=20)
+
+
+class Turn(BaseModel):
+    """A single player turn in the game loop."""
+
+    id: UUID = Field(default_factory=uuid4)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    # Input
+    player_input: str
+    universe_id: UUID
+    actor_id: UUID
+    location_id: UUID
+
+    # Processing results (filled during turn)
+    intent: Intent | None = None
+    context: Context | None = None
+    skill_results: list[SkillResult] = Field(default_factory=list)
+    events_created: list[UUID] = Field(default_factory=list)
+    narrative: str = ""
+
+    # Metadata
+    processing_time_ms: int = 0
+    error: str | None = None
+
+
+class TurnResult(BaseModel):
+    """Result returned to the player."""
+
+    narrative: str = Field(description="The story response")
+
+    # Optional details for UI
+    rolls: list[RollSummary] = Field(default_factory=list)
+    state_changes: list[str] = Field(default_factory=list)
+
+    # Meta
+    turn_id: UUID
+    events_created: int = 0
+    processing_time_ms: int = 0
+
+    # Error info (if any)
+    error: str | None = None
+
+
+class Session(BaseModel):
+    """An active game session."""
+
+    id: UUID = Field(default_factory=uuid4)
+    universe_id: UUID
+    character_id: UUID
+    location_id: UUID
+
+    # Session state
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    last_turn_at: datetime | None = None
+    turn_count: int = 0
+
+    # Configuration
+    tone: str = "adventure"
+    verbosity: str = "normal"
+
+
+class EngineConfig(BaseModel):
+    """Engine configuration."""
+
+    # LLM settings
+    model: str = "claude-sonnet-4-20250514"
+    max_tokens: int = 1024
+    temperature: float = 0.7
+
+    # Context settings
+    max_recent_events: int = 10
+    max_nearby_entities: int = 20
+
+    # Behavior
+    verbosity: str = "normal"
+    tone: str = "adventure"
+    strict_rules: bool = True
