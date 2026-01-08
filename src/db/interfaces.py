@@ -64,6 +64,10 @@ class DoltRepository(Protocol):
         """Get an entity by ID within a specific universe."""
         ...
 
+    def get_entity_by_name(self, name: str, universe_id: UUID) -> Entity | None:
+        """Get an entity by name within a specific universe."""
+        ...
+
     def get_entities_by_type(self, entity_type: str, universe_id: UUID) -> list[Entity]:
         """Get all entities of a given type in a universe."""
         ...
