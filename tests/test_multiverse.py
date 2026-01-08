@@ -488,6 +488,22 @@ class TestMergeProposals:
         assert proposal.status == MergeProposalStatus.CONFLICT
         assert any("ancestor" in conflict.lower() for conflict in proposal.conflicts)
 
+    def test_propose_merge_detects_self_merge(self, multiverse_service: MultiverseService):
+        """Proposal should fail if trying to merge a universe to itself."""
+        prime = multiverse_service.initialize_prime_material()
+
+        # Try to merge prime to itself
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=prime.id,
+            target_universe_id=prime.id,
+            entity_ids=[],
+            title="Self Merge",
+            description="This should fail - can't merge to self",
+        )
+
+        assert proposal.status == MergeProposalStatus.CONFLICT
+        assert any("into itself" in conflict for conflict in proposal.conflicts)
+
     def test_review_proposal_approves(self, multiverse_service: MultiverseService):
         """Reviewing and approving a valid proposal should work."""
         prime = multiverse_service.initialize_prime_material()

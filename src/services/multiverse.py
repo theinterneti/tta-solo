@@ -467,6 +467,10 @@ class MultiverseService:
         if not target.is_active():
             conflicts.append(f"Target universe is not active (status: {target.status})")
 
+        # Check source and target are not the same
+        if proposal.source_universe_id == proposal.target_universe_id:
+            conflicts.append("Cannot merge a universe into itself")
+
         # Check target is an ancestor of source (can only merge up the tree)
         lineage = self.get_universe_lineage(proposal.source_universe_id)
         target_ids = [u.id for u in lineage]
