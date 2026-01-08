@@ -12,9 +12,9 @@ Agents communicate via AgentMessage protocol.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from src.db.interfaces import DoltRepository, Neo4jRepository
@@ -30,9 +30,6 @@ from src.engine.models import (
 )
 from src.engine.router import SkillRouter
 from src.models import Entity, RelationshipType
-
-if TYPE_CHECKING:
-    pass
 
 
 class AgentRole(str, Enum):
@@ -76,7 +73,7 @@ class AgentMessage:
     from_agent: AgentRole = AgentRole.GM
     to_agent: AgentRole | None = None
     payload: dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     correlation_id: UUID | None = None  # Links request/response pairs
 
     def reply(

@@ -250,11 +250,15 @@ class TestSkillRouterPbtA:
         )
 
         # Run many times to ensure we get some strong hits
+        found_strong_hit = False
         for _ in range(100):
             result = router.resolve(intent, basic_context)
             if result.pbta_outcome == "strong_hit":
                 assert result.strong_hit_bonus is not None
+                found_strong_hit = True
                 break
+
+        assert found_strong_hit, "Expected at least one strong_hit in 100 rolls"
 
     def test_weak_hit_has_complication(self, router: SkillRouter, basic_context: Context):
         """Weak hit should have complication."""
@@ -265,11 +269,15 @@ class TestSkillRouterPbtA:
         )
 
         # Run many times to ensure we get some weak hits
+        found_weak_hit = False
         for _ in range(100):
             result = router.resolve(intent, basic_context)
             if result.pbta_outcome == "weak_hit":
                 assert result.weak_hit_complication is not None
+                found_weak_hit = True
                 break
+
+        assert found_weak_hit, "Expected at least one weak_hit in 100 rolls"
 
     def test_miss_has_gm_move(self, router: SkillRouter, basic_context: Context):
         """Miss should have GM move."""
@@ -281,12 +289,16 @@ class TestSkillRouterPbtA:
         )
 
         # Run many times to ensure we get some misses
+        found_miss = False
         for _ in range(100):
             result = router.resolve(intent, basic_context)
             if result.pbta_outcome == "miss":
                 assert result.gm_move_type is not None
                 assert result.gm_move_description is not None
+                found_miss = True
                 break
+
+        assert found_miss, "Expected at least one miss in 100 rolls"
 
     def test_high_danger_miss_deals_damage(self, router: SkillRouter):
         """Miss in high danger should sometimes deal damage."""
