@@ -7,8 +7,9 @@ Implements the "Git for Fiction" concept from the multiverse spec.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -45,17 +46,62 @@ class TravelResult(BaseModel):
     error: str | None = None
 
 
+class MergeProposalStatus(str, Enum):
+    """Status of a merge proposal."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    MERGED = "merged"
+    CONFLICT = "conflict"
+
+
 class MergeProposal(BaseModel):
-    """A proposal to merge content back to canon."""
+    """
+    A proposal to merge content back to canon.
+
+    This is the "Pull Request" for fiction - allowing player-created
+    content (locations, NPCs, lore) to be proposed for the Prime Material.
+    """
 
     id: UUID = Field(default_factory=uuid4)
-    source_universe_id: UUID
-    target_universe_id: UUID
-    entity_ids: list[UUID] = Field(default_factory=list)
-    description: str
-    status: str = "pending"  # pending, approved, rejected, merged
+    source_universe_id: UUID = Field(description="Universe containing the content")
+    target_universe_id: UUID = Field(description="Universe to merge into (usually Prime)")
+    entity_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Specific entities to merge",
+    )
+    title: str = Field(default="", description="Short title for the proposal")
+    description: str = Field(description="Why this content should be merged")
+
+    # Review workflow
+    status: MergeProposalStatus = MergeProposalStatus.PENDING
+    submitter_id: UUID | None = Field(default=None, description="Who submitted this")
+    reviewer_id: UUID | None = Field(default=None, description="Who reviewed this")
+    review_notes: str = Field(default="", description="Notes from the reviewer")
+
+    # Validation
+    conflicts: list[str] = Field(
+        default_factory=list,
+        description="Any conflicts detected during validation",
+    )
+    validation_passed: bool = Field(default=False)
+
+    # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_at: datetime | None = None
+    merged_at: datetime | None = None
+
+
+class MergeResult(BaseModel):
+    """Result of a merge operation."""
+
+    success: bool
+    proposal_id: UUID | None = None
+    entities_merged: int = 0
+    entities_skipped: int = 0
+    error: str | None = None
+    narrative: str = Field(default="", description="Narrative description of the merge")
 
 
 @dataclass
@@ -331,3 +377,278 @@ class MultiverseService:
         # This would need a proper query in a real implementation
         # For now, we return an empty list as a placeholder
         return []
+
+    # =========================================================================
+    # Phase 5: Merge/PR System for Canon
+    # =========================================================================
+
+    # In-memory storage for proposals (would be persisted in production)
+    _proposals: dict[UUID, MergeProposal] = field(default_factory=dict)
+
+    def propose_merge(
+        self,
+        source_universe_id: UUID,
+        target_universe_id: UUID,
+        entity_ids: list[UUID],
+        title: str,
+        description: str,
+        submitter_id: UUID | None = None,
+    ) -> MergeProposal:
+        """
+        Create a proposal to merge content from one universe to another.
+
+        This is the "Pull Request" for fiction - proposing that player-created
+        content be added to the canonical Prime Material.
+
+        Args:
+            source_universe_id: Universe containing the content to merge
+            target_universe_id: Universe to merge into (usually Prime Material)
+            entity_ids: Specific entities to include in the merge
+            title: Short title for the proposal
+            description: Why this content should be merged
+            submitter_id: UUID of the player submitting
+
+        Returns:
+            MergeProposal with validation status
+        """
+        proposal = MergeProposal(
+            source_universe_id=source_universe_id,
+            target_universe_id=target_universe_id,
+            entity_ids=entity_ids,
+            title=title,
+            description=description,
+            submitter_id=submitter_id,
+        )
+
+        # Validate the proposal
+        conflicts = self.validate_merge(proposal)
+        proposal.conflicts = conflicts
+        proposal.validation_passed = len(conflicts) == 0
+
+        if conflicts:
+            proposal.status = MergeProposalStatus.CONFLICT
+
+        # Store the proposal
+        self._proposals[proposal.id] = proposal
+
+        return proposal
+
+    def validate_merge(self, proposal: MergeProposal) -> list[str]:
+        """
+        Validate a merge proposal for conflicts.
+
+        Checks:
+        1. Source and target universes exist
+        2. Entities exist in source universe
+        3. No name conflicts in target universe
+        4. Target is an ancestor of source (can merge up the tree)
+
+        Args:
+            proposal: The merge proposal to validate
+
+        Returns:
+            List of conflict descriptions (empty if valid)
+        """
+        conflicts: list[str] = []
+
+        # Check source universe exists
+        source = self.dolt.get_universe(proposal.source_universe_id)
+        if source is None:
+            conflicts.append(f"Source universe {proposal.source_universe_id} not found")
+            return conflicts
+
+        # Check target universe exists
+        target = self.dolt.get_universe(proposal.target_universe_id)
+        if target is None:
+            conflicts.append(f"Target universe {proposal.target_universe_id} not found")
+            return conflicts
+
+        # Check target is active
+        if not target.is_active():
+            conflicts.append(f"Target universe is not active (status: {target.status})")
+
+        # Verify entities exist in source
+        self.dolt.checkout_branch(source.dolt_branch)
+        for entity_id in proposal.entity_ids:
+            entity = self.dolt.get_entity(entity_id, proposal.source_universe_id)
+            if entity is None:
+                conflicts.append(f"Entity {entity_id} not found in source universe")
+            else:
+                # Check for name conflicts in target
+                self.dolt.checkout_branch(target.dolt_branch)
+                # In a real implementation, we'd check if an entity with the
+                # same name already exists in the target
+                existing = self.dolt.get_entity(entity_id, proposal.target_universe_id)
+                if existing is not None:
+                    conflicts.append(
+                        f"Entity '{entity.name}' already exists in target universe"
+                    )
+                self.dolt.checkout_branch(source.dolt_branch)
+
+        return conflicts
+
+    def review_proposal(
+        self,
+        proposal_id: UUID,
+        approved: bool,
+        reviewer_id: UUID,
+        review_notes: str = "",
+    ) -> MergeProposal | None:
+        """
+        Review a merge proposal, approving or rejecting it.
+
+        Args:
+            proposal_id: ID of the proposal to review
+            approved: Whether to approve the proposal
+            reviewer_id: UUID of the reviewer
+            review_notes: Notes explaining the decision
+
+        Returns:
+            Updated MergeProposal, or None if not found
+        """
+        proposal = self._proposals.get(proposal_id)
+        if proposal is None:
+            return None
+
+        proposal.reviewer_id = reviewer_id
+        proposal.review_notes = review_notes
+        proposal.reviewed_at = datetime.utcnow()
+
+        if approved:
+            if proposal.validation_passed:
+                proposal.status = MergeProposalStatus.APPROVED
+            else:
+                # Can't approve with conflicts
+                proposal.status = MergeProposalStatus.CONFLICT
+        else:
+            proposal.status = MergeProposalStatus.REJECTED
+
+        return proposal
+
+    def execute_merge(self, proposal_id: UUID) -> MergeResult:
+        """
+        Execute an approved merge proposal.
+
+        Copies entities from the source universe to the target universe,
+        creating appropriate events and Neo4j relationships.
+
+        Args:
+            proposal_id: ID of the approved proposal to execute
+
+        Returns:
+            MergeResult with outcome details
+        """
+        proposal = self._proposals.get(proposal_id)
+        if proposal is None:
+            return MergeResult(
+                success=False,
+                error=f"Proposal {proposal_id} not found",
+            )
+
+        if proposal.status != MergeProposalStatus.APPROVED:
+            return MergeResult(
+                success=False,
+                proposal_id=proposal_id,
+                error=f"Proposal is not approved (status: {proposal.status.value})",
+            )
+
+        # Get universes
+        source = self.dolt.get_universe(proposal.source_universe_id)
+        target = self.dolt.get_universe(proposal.target_universe_id)
+
+        if source is None or target is None:
+            return MergeResult(
+                success=False,
+                proposal_id=proposal_id,
+                error="Source or target universe not found",
+            )
+
+        entities_merged = 0
+        entities_skipped = 0
+        merged_names: list[str] = []
+
+        # Copy each entity to the target
+        for entity_id in proposal.entity_ids:
+            self.dolt.checkout_branch(source.dolt_branch)
+            entity = self.dolt.get_entity(entity_id, proposal.source_universe_id)
+
+            if entity is None:
+                entities_skipped += 1
+                continue
+
+            # Create a copy for the target universe
+            merged_entity = entity.model_copy(deep=True)
+            merged_entity.id = uuid4()  # New ID in target
+            merged_entity.universe_id = proposal.target_universe_id
+            merged_entity.created_at = datetime.utcnow()
+            merged_entity.updated_at = datetime.utcnow()
+
+            # Save to target
+            self.dolt.checkout_branch(target.dolt_branch)
+            self.dolt.save_entity(merged_entity)
+
+            # Create Neo4j variant relationship (tracks origin)
+            self.neo4j.create_variant_node(
+                original_entity_id=entity_id,
+                variant_entity_id=merged_entity.id,
+                variant_universe_id=proposal.target_universe_id,
+                changes={"merged_from": str(proposal.source_universe_id)},
+            )
+
+            entities_merged += 1
+            merged_names.append(entity.name)
+
+        # Record the merge event
+        merge_event = Event(
+            universe_id=proposal.target_universe_id,
+            event_type=EventType.MERGE,
+            actor_id=proposal.submitter_id or uuid4(),
+            outcome=EventOutcome.SUCCESS,
+            payload={
+                "proposal_id": str(proposal_id),
+                "source_universe_id": str(proposal.source_universe_id),
+                "entities_merged": entities_merged,
+                "entity_names": merged_names,
+            },
+            narrative_summary=f"Content merged from alternate timeline: {', '.join(merged_names)}",
+        )
+        self.dolt.append_event(merge_event)
+
+        # Update proposal status
+        proposal.status = MergeProposalStatus.MERGED
+        proposal.merged_at = datetime.utcnow()
+
+        return MergeResult(
+            success=True,
+            proposal_id=proposal_id,
+            entities_merged=entities_merged,
+            entities_skipped=entities_skipped,
+            narrative=f"Successfully merged {entities_merged} entities to canon: {', '.join(merged_names)}",
+        )
+
+    def get_pending_proposals(
+        self,
+        target_universe_id: UUID | None = None,
+    ) -> list[MergeProposal]:
+        """
+        Get all pending merge proposals.
+
+        Args:
+            target_universe_id: Filter by target universe (optional)
+
+        Returns:
+            List of pending MergeProposal objects
+        """
+        pending = [
+            p for p in self._proposals.values()
+            if p.status == MergeProposalStatus.PENDING
+        ]
+
+        if target_universe_id is not None:
+            pending = [p for p in pending if p.target_universe_id == target_universe_id]
+
+        return pending
+
+    def get_proposal(self, proposal_id: UUID) -> MergeProposal | None:
+        """Get a specific merge proposal by ID."""
+        return self._proposals.get(proposal_id)

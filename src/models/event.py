@@ -62,6 +62,7 @@ class EventType(str, Enum):
 
     # World events
     FORK = "fork"
+    MERGE = "merge"
     WORLD_CHANGE = "world_change"
     TIME_PASSAGE = "time_passage"
 
