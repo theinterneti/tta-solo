@@ -480,9 +480,7 @@ class MultiverseService:
                 # same name already exists in the target
                 existing = self.dolt.get_entity(entity_id, proposal.target_universe_id)
                 if existing is not None:
-                    conflicts.append(
-                        f"Entity '{entity.name}' already exists in target universe"
-                    )
+                    conflicts.append(f"Entity '{entity.name}' already exists in target universe")
                 self.dolt.checkout_branch(source.dolt_branch)
 
         return conflicts
@@ -598,16 +596,25 @@ class MultiverseService:
             entities_merged += 1
             merged_names.append(entity.name)
 
+        # Determine outcome based on merge results
+        if entities_merged == 0:
+            outcome = EventOutcome.FAILURE
+        elif entities_skipped > 0:
+            outcome = EventOutcome.PARTIAL
+        else:
+            outcome = EventOutcome.SUCCESS
+
         # Record the merge event
         merge_event = Event(
             universe_id=proposal.target_universe_id,
             event_type=EventType.MERGE,
             actor_id=proposal.submitter_id or uuid4(),
-            outcome=EventOutcome.SUCCESS,
+            outcome=outcome,
             payload={
                 "proposal_id": str(proposal_id),
                 "source_universe_id": str(proposal.source_universe_id),
                 "entities_merged": entities_merged,
+                "entities_skipped": entities_skipped,
                 "entity_names": merged_names,
             },
             narrative_summary=f"Content merged from alternate timeline: {', '.join(merged_names)}",
@@ -639,10 +646,7 @@ class MultiverseService:
         Returns:
             List of pending MergeProposal objects
         """
-        pending = [
-            p for p in self._proposals.values()
-            if p.status == MergeProposalStatus.PENDING
-        ]
+        pending = [p for p in self._proposals.values() if p.status == MergeProposalStatus.PENDING]
 
         if target_universe_id is not None:
             pending = [p for p in pending if p.target_universe_id == target_universe_id]

@@ -600,6 +600,58 @@ class TestMergeProposals:
         assert not result.success
         assert "not approved" in result.error
 
+    def test_execute_merge_success_outcome_when_all_entities_merge(
+        self, multiverse_service: MultiverseService
+    ):
+        """Merge event outcome should be SUCCESS when all entities merge successfully."""
+        from src.models import EventOutcome
+
+        prime = multiverse_service.initialize_prime_material()
+
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Player Branch",
+            fork_reason="Testing outcome",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Create entities in fork
+        npc = create_character(universe_id=fork.universe.id, name="Test NPC")
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        multiverse_service.dolt.save_entity(npc)
+
+        # Create and approve proposal
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc.id],
+            title="Test Merge",
+            description="Testing SUCCESS outcome",
+        )
+
+        multiverse_service.review_proposal(
+            proposal_id=proposal.id,
+            approved=True,
+            reviewer_id=uuid4(),
+        )
+
+        # Execute the merge
+        result = multiverse_service.execute_merge(proposal.id)
+
+        assert result.success
+        assert result.entities_merged == 1
+        assert result.entities_skipped == 0
+
+        # Check the merge event has SUCCESS outcome since all entities merged
+        events = multiverse_service.dolt.get_events(prime.id)
+        merge_events = [e for e in events if e.event_type == EventType.MERGE]
+        assert len(merge_events) == 1
+        merge_event = merge_events[0]
+        assert merge_event.outcome == EventOutcome.SUCCESS
+        assert merge_event.payload["entities_merged"] == 1
+        assert merge_event.payload["entities_skipped"] == 0
+
     def test_get_pending_proposals(self, multiverse_service: MultiverseService):
         """Should return all pending proposals."""
         prime = multiverse_service.initialize_prime_material()
