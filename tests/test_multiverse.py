@@ -455,6 +455,39 @@ class TestMergeProposals:
         assert proposal.status == MergeProposalStatus.CONFLICT
         assert "not found in source universe" in proposal.conflicts[0]
 
+    def test_propose_merge_detects_invalid_ancestry(self, multiverse_service: MultiverseService):
+        """Proposal should fail if target is not an ancestor of source."""
+        prime = multiverse_service.initialize_prime_material()
+
+        # Create two sibling forks
+        fork1 = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Fork 1",
+            fork_reason="First branch",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork1.universe)
+
+        fork2 = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Fork 2",
+            fork_reason="Second branch",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork2.universe)
+
+        # Try to merge from fork1 to fork2 (siblings, not ancestor)
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork1.universe.id,
+            target_universe_id=fork2.universe.id,
+            entity_ids=[],
+            title="Invalid Merge",
+            description="This should fail - can't merge to sibling",
+        )
+
+        assert proposal.status == MergeProposalStatus.CONFLICT
+        assert any("ancestor" in conflict.lower() for conflict in proposal.conflicts)
+
     def test_review_proposal_approves(self, multiverse_service: MultiverseService):
         """Reviewing and approving a valid proposal should work."""
         prime = multiverse_service.initialize_prime_material()

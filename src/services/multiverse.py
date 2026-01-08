@@ -467,6 +467,15 @@ class MultiverseService:
         if not target.is_active():
             conflicts.append(f"Target universe is not active (status: {target.status})")
 
+        # Check target is an ancestor of source (can only merge up the tree)
+        lineage = self.get_universe_lineage(proposal.source_universe_id)
+        target_ids = [u.id for u in lineage]
+        if proposal.target_universe_id not in target_ids:
+            conflicts.append(
+                f"Target universe must be an ancestor of source universe. "
+                f"Can only merge up the fork tree."
+            )
+
         # Verify entities exist in source
         self.dolt.checkout_branch(source.dolt_branch)
         for entity_id in proposal.entity_ids:
