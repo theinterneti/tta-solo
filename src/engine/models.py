@@ -105,6 +105,23 @@ class SkillResult(BaseModel):
     is_critical: bool = False
     is_fumble: bool = False
 
+    # PbtA (Phase 4)
+    pbta_outcome: str | None = Field(
+        default=None, description="PbtA outcome: strong_hit, weak_hit, miss"
+    )
+    gm_move_type: str | None = Field(
+        default=None, description="GM move type on miss"
+    )
+    gm_move_description: str | None = Field(
+        default=None, description="Description of GM move"
+    )
+    weak_hit_complication: str | None = Field(
+        default=None, description="Complication on weak hit"
+    )
+    strong_hit_bonus: str | None = Field(
+        default=None, description="Bonus effect on strong hit"
+    )
+
     def to_roll_summary(self, label: str = "Roll") -> RollSummary:
         """Convert to a RollSummary for display."""
         return RollSummary(
@@ -210,12 +227,28 @@ class TurnResult(BaseModel):
 
 
 class Session(BaseModel):
-    """An active game session."""
+    """
+    An active game session.
+
+    Supports multi-character sessions (Phase 4) where multiple
+    characters can participate, with one active at a time.
+    """
+
+    model_config = {"extra": "allow"}  # Allow extra fields for backwards compat
 
     id: UUID = Field(default_factory=uuid4)
     universe_id: UUID
-    character_id: UUID
     location_id: UUID
+
+    # Character management (Phase 4: multi-character support)
+    character_ids: list[UUID] = Field(
+        default_factory=list,
+        description="All characters in this session",
+    )
+    active_character_id: UUID | None = Field(
+        default=None,
+        description="Currently active character (takes turns)",
+    )
 
     # Session state
     started_at: datetime = Field(default_factory=datetime.utcnow)
@@ -225,6 +258,80 @@ class Session(BaseModel):
     # Configuration
     tone: str = "adventure"
     verbosity: str = "normal"
+
+    def __init__(self, **data):
+        """Handle backwards compatibility with old character_id field."""
+        # Handle old-style character_id parameter
+        if "character_id" in data and "character_ids" not in data:
+            char_id = data.pop("character_id")
+            data["character_ids"] = [char_id]
+            data["active_character_id"] = char_id
+        super().__init__(**data)
+
+    # Backwards compatibility property
+    @property
+    def character_id(self) -> UUID:
+        """Get the active character ID (backwards compatible)."""
+        if self.active_character_id is not None:
+            return self.active_character_id
+        if self.character_ids:
+            return self.character_ids[0]
+        raise ValueError("No characters in session")
+
+    def add_character(self, character_id: UUID, make_active: bool = False) -> None:
+        """
+        Add a character to the session.
+
+        Args:
+            character_id: UUID of the character to add
+            make_active: Whether to make this character active
+        """
+        if character_id not in self.character_ids:
+            self.character_ids.append(character_id)
+
+        if make_active or self.active_character_id is None:
+            self.active_character_id = character_id
+
+    def remove_character(self, character_id: UUID) -> bool:
+        """
+        Remove a character from the session.
+
+        Args:
+            character_id: UUID of the character to remove
+
+        Returns:
+            True if removed, False if not found
+        """
+        if character_id not in self.character_ids:
+            return False
+
+        self.character_ids.remove(character_id)
+
+        # If we removed the active character, switch to another
+        if self.active_character_id == character_id:
+            self.active_character_id = self.character_ids[0] if self.character_ids else None
+
+        return True
+
+    def switch_character(self, character_id: UUID) -> bool:
+        """
+        Switch to a different active character.
+
+        Args:
+            character_id: UUID of the character to switch to
+
+        Returns:
+            True if switched, False if character not in session
+        """
+        if character_id not in self.character_ids:
+            return False
+
+        self.active_character_id = character_id
+        return True
+
+    def get_inactive_characters(self) -> list[UUID]:
+        """Get all characters that are not currently active."""
+        return [c for c in self.character_ids if c != self.active_character_id]
 
 
 class EngineConfig(BaseModel):
@@ -243,3 +350,20 @@ class EngineConfig(BaseModel):
     verbosity: str = "normal"
     tone: str = "adventure"
     strict_rules: bool = True
+
+
+class ForkResult(BaseModel):
+    """Result of a fork/branch operation from the game engine."""
+
+    success: bool
+    new_universe_id: UUID | None = Field(
+        default=None, description="ID of the newly created universe"
+    )
+    new_session_id: UUID | None = Field(
+        default=None, description="ID of the new session in forked universe"
+    )
+    fork_reason: str = Field(default="", description="Why this fork was created")
+    narrative: str = Field(
+        default="", description="Narrative description of the fork"
+    )
+    error: str | None = Field(default=None, description="Error message if failed")

@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 from src.engine.models import Context, Intent, IntentType, SkillResult
+from src.engine.pbta import (
+    PbtAOutcome,
+    calculate_pbta_outcome,
+    get_strong_hit_bonus,
+    get_weak_hit_complication,
+    select_gm_move,
+)
 from src.skills.checks import SkillProficiencies, skill_check
 from src.skills.combat import Combatant, Weapon, resolve_attack
 from src.skills.rest import CharacterResources, HitDice, take_long_rest, take_short_rest
@@ -48,7 +55,17 @@ class SkillRouter:
     Routes intents to appropriate skill functions.
 
     Acts as the "Rules Lawyer" - handles all mechanical resolution.
+    Now with PbtA move system integration (Phase 4).
     """
+
+    def __init__(self, use_pbta: bool = True) -> None:
+        """
+        Initialize the skill router.
+
+        Args:
+            use_pbta: Whether to apply PbtA outcomes to results
+        """
+        self.use_pbta = use_pbta
 
     def resolve(
         self,
@@ -65,13 +82,13 @@ class SkillRouter:
             extra: Additional context (combat targets, etc.)
 
         Returns:
-            SkillResult with the outcome
+            SkillResult with the outcome (and PbtA info if enabled)
         """
         extra = extra or {}
 
         # Route to appropriate handler
         if intent.type == IntentType.ATTACK:
-            return self._resolve_attack(intent, context, extra)
+            result = self._resolve_attack(intent, context, extra)
 
         elif intent.type in {
             IntentType.PERSUADE,
@@ -79,27 +96,106 @@ class SkillRouter:
             IntentType.DECEIVE,
             IntentType.SEARCH,
         }:
-            return self._resolve_skill_check(intent, context, extra)
+            result = self._resolve_skill_check(intent, context, extra)
 
         elif intent.type == IntentType.REST:
-            return self._resolve_rest(intent, context, extra)
+            result = self._resolve_rest(intent, context, extra)
 
         elif intent.type == IntentType.LOOK:
-            return self._resolve_look(intent, context)
+            result = self._resolve_look(intent, context)
 
         elif intent.type == IntentType.MOVE:
-            return self._resolve_move(intent, context)
+            result = self._resolve_move(intent, context)
 
         elif intent.type == IntentType.TALK:
-            return self._resolve_talk(intent, context)
+            result = self._resolve_talk(intent, context)
+
+        elif intent.type == IntentType.FORK:
+            result = self._resolve_fork(intent, context)
 
         else:
             # For intents without mechanical resolution
-            return SkillResult(
+            result = SkillResult(
                 success=True,
                 outcome="neutral",
                 description=f"Action: {intent.type.value}",
             )
+
+        # Apply PbtA outcomes if enabled and result has a roll
+        if self.use_pbta and result.roll is not None:
+            result = self._apply_pbta(result, intent, context)
+
+        return result
+
+    def _apply_pbta(
+        self,
+        result: SkillResult,
+        intent: Intent,
+        context: Context,
+    ) -> SkillResult:
+        """
+        Apply PbtA outcome system to a skill result.
+
+        Calculates strong hit/weak hit/miss based on the roll,
+        and selects appropriate GM moves or bonus effects.
+
+        Args:
+            result: The base skill result
+            intent: The player intent
+            context: Current game context
+
+        Returns:
+            Updated SkillResult with PbtA fields populated
+        """
+        # Calculate PbtA outcome
+        pbta_outcome = calculate_pbta_outcome(
+            total=result.total or result.roll or 0,
+            dc=result.dc,
+            is_critical=result.is_critical,
+            is_fumble=result.is_fumble,
+        )
+
+        # Determine if this is combat
+        is_combat = intent.type in {IntentType.ATTACK, IntentType.CAST_SPELL}
+
+        # Build the updated result
+        updates: dict[str, Any] = {
+            "pbta_outcome": pbta_outcome.value,
+        }
+
+        if pbta_outcome == PbtAOutcome.STRONG_HIT:
+            # Add bonus effect
+            bonus = get_strong_hit_bonus(intent.type.value)
+            updates["strong_hit_bonus"] = bonus
+            # Enhance description
+            updates["description"] = f"{result.description} {bonus}"
+
+        elif pbta_outcome == PbtAOutcome.WEAK_HIT:
+            # Add complication
+            complication = get_weak_hit_complication(intent.type.value)
+            updates["weak_hit_complication"] = complication
+            # Enhance description
+            updates["description"] = f"{result.description} {complication}"
+
+        elif pbta_outcome == PbtAOutcome.MISS:
+            # Select and apply GM move
+            gm_move = select_gm_move(
+                danger_level=context.danger_level,
+                is_combat=is_combat,
+            )
+            updates["gm_move_type"] = gm_move.type.value
+            updates["gm_move_description"] = gm_move.description
+
+            # If GM move deals damage, add it
+            if gm_move.damage:
+                existing_damage = result.damage or 0
+                updates["damage"] = existing_damage + gm_move.damage
+                updates["description"] = f"{result.description} {gm_move.description} ({gm_move.damage} damage)"
+            else:
+                updates["description"] = f"{result.description} {gm_move.description}"
+
+        # Create new result with updates
+        return result.model_copy(update=updates)
 
     def _resolve_attack(
         self,
@@ -318,4 +414,21 @@ class SkillRouter:
             success=True,
             outcome="neutral",
             description=f'You say to {target}: "{dialogue}"',
+        )
+
+    def _resolve_fork(self, intent: Intent, context: Context) -> SkillResult:
+        """
+        Resolve a fork/timeline branch request.
+
+        Note: The actual fork operation is handled by the GameEngine.
+        This just returns a result indicating a fork was requested.
+        The engine will see this and call fork_from_here().
+        """
+        # Extract the "what if" scenario from the input
+        reason = intent.original_input
+
+        return SkillResult(
+            success=True,
+            outcome="fork_requested",
+            description=f"You consider an alternate path: {reason}",
         )

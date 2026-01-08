@@ -18,6 +18,7 @@ from src.engine.models import (
     Context,
     EngineConfig,
     EntitySummary,
+    ForkResult,
     Intent,
     IntentType,
     RelationshipSummary,
@@ -28,6 +29,7 @@ from src.engine.models import (
 )
 from src.engine.router import SkillRouter
 from src.models import Entity, Event, EventOutcome, EventType, RelationshipType
+from src.services.multiverse import MultiverseService
 
 if TYPE_CHECKING:
     from src.engine.agents import (
@@ -225,7 +227,7 @@ class GameEngine:
 
         Args:
             universe_id: The timeline to play in
-            character_id: The player's character
+            character_id: The player's character (will be active)
             location_id: Starting location (or get from character)
 
         Returns:
@@ -242,8 +244,9 @@ class GameEngine:
 
         session = Session(
             universe_id=universe_id,
-            character_id=character_id,
             location_id=location_id,
+            character_ids=[character_id],
+            active_character_id=character_id,
             tone=self.config.tone,
             verbosity=self.config.verbosity,
         )
@@ -258,6 +261,144 @@ class GameEngine:
     def get_session(self, session_id: UUID) -> Session | None:
         """Get an active session."""
         return self._sessions.get(session_id)
+
+    def add_character_to_session(
+        self,
+        session_id: UUID,
+        character_id: UUID,
+        make_active: bool = False,
+    ) -> bool:
+        """
+        Add a character to an existing session.
+
+        Args:
+            session_id: The session to add to
+            character_id: The character to add
+            make_active: Whether to make this the active character
+
+        Returns:
+            True if added, False if session not found
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return False
+
+        session.add_character(character_id, make_active)
+        return True
+
+    def switch_active_character(
+        self,
+        session_id: UUID,
+        character_id: UUID,
+    ) -> bool:
+        """
+        Switch the active character in a session.
+
+        Args:
+            session_id: The session
+            character_id: The character to switch to
+
+        Returns:
+            True if switched, False if session or character not found
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return False
+
+        return session.switch_character(character_id)
+
+    def remove_character_from_session(
+        self,
+        session_id: UUID,
+        character_id: UUID,
+    ) -> bool:
+        """
+        Remove a character from a session.
+
+        Args:
+            session_id: The session
+            character_id: The character to remove
+
+        Returns:
+            True if removed, False if session or character not found
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return False
+
+        return session.remove_character(character_id)
+
+    async def fork_from_here(
+        self,
+        session_id: UUID,
+        reason: str,
+        fork_name: str | None = None,
+    ) -> ForkResult:
+        """
+        Fork the timeline at the current point in the session.
+
+        Creates a new universe branching from the current state,
+        allowing the player to explore "what if" scenarios.
+
+        Args:
+            session_id: The active session to fork from
+            reason: Why this fork is being created (e.g., "What if I had attacked?")
+            fork_name: Optional name for the new universe
+
+        Returns:
+            ForkResult with the new universe and session, or error
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return ForkResult(
+                success=False,
+                error="Session not found",
+            )
+
+        # Create multiverse service
+        multiverse = MultiverseService(dolt=self.dolt, neo4j=self.neo4j)
+
+        # Generate fork name if not provided
+        if fork_name is None:
+            fork_name = f"Fork: {reason[:50]}"
+
+        # Get the most recent event ID for the fork point
+        recent_events = self.dolt.get_events_at_location(
+            session.universe_id,
+            session.location_id,
+            limit=1,
+        )
+        fork_point_event_id = recent_events[0].id if recent_events else None
+
+        # Fork the universe
+        fork_result = multiverse.fork_universe(
+            parent_universe_id=session.universe_id,
+            new_universe_name=fork_name,
+            fork_reason=reason,
+            player_id=session.character_id,
+            fork_point_event_id=fork_point_event_id,
+        )
+
+        if not fork_result.success or fork_result.universe is None:
+            return ForkResult(
+                success=False,
+                error=fork_result.error or "Failed to fork universe",
+            )
+
+        # Create a new session in the forked universe
+        new_session = await self.start_session(
+            universe_id=fork_result.universe.id,
+            character_id=session.character_id,
+            location_id=session.location_id,
+        )
+
+        return ForkResult(
+            success=True,
+            new_universe_id=fork_result.universe.id,
+            new_session_id=new_session.id,
+            fork_reason=reason,
+            narrative=f"The timeline splits... You find yourself in a world where {reason}",
+        )
 
     async def process_turn(
         self,

@@ -11,6 +11,10 @@ Phase 3 introduces specialized agents:
 - GM (Game Master): Orchestration and narrative
 - Rules Lawyer: Mechanical enforcement
 - Lorekeeper: Context retrieval
+
+Phase 4 introduces:
+- PbtA move system (strong hit/weak hit/miss)
+- GM moves on failures
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from src.engine.models import (
     Context,
     EngineConfig,
     EntitySummary,
+    ForkResult,
     Intent,
     IntentType,
     RelationshipSummary,
@@ -44,6 +49,16 @@ from src.engine.models import (
     SkillResult,
     Turn,
     TurnResult,
+)
+from src.engine.pbta import (
+    GMMove,
+    GMMoveType,
+    PbtAOutcome,
+    PbtAResult,
+    calculate_pbta_outcome,
+    get_strong_hit_bonus,
+    get_weak_hit_complication,
+    select_gm_move,
 )
 from src.engine.router import CheckContext, CombatContext, RestContext, SkillRouter
 
@@ -59,10 +74,20 @@ __all__ = [
     "LorekeeperAgent",
     "MessageType",
     "RulesLawyerAgent",
+    # PbtA (Phase 4)
+    "GMMove",
+    "GMMoveType",
+    "PbtAOutcome",
+    "PbtAResult",
+    "calculate_pbta_outcome",
+    "get_strong_hit_bonus",
+    "get_weak_hit_complication",
+    "select_gm_move",
     # Models
     "Context",
     "EngineConfig",
     "EntitySummary",
+    "ForkResult",
     "Intent",
     "IntentType",
     "RelationshipSummary",

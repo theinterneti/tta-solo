@@ -1062,6 +1062,179 @@ class TestAgentOrchestrator:
         assert len(skill_results) > 0
 
 
+class TestMultiCharacterSession:
+    """Tests for multi-character session support (Phase 4)."""
+
+    def test_session_backwards_compat(self):
+        """Old-style character_id should still work."""
+        char_id = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            character_id=char_id,
+            location_id=uuid4(),
+        )
+        assert session.character_id == char_id
+        assert session.active_character_id == char_id
+        assert char_id in session.character_ids
+
+    def test_session_new_style(self):
+        """New-style with character_ids should work."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            location_id=uuid4(),
+            character_ids=[char1, char2],
+            active_character_id=char1,
+        )
+        assert session.character_id == char1
+        assert len(session.character_ids) == 2
+
+    def test_add_character(self):
+        """Should be able to add characters to session."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            character_id=char1,
+            location_id=uuid4(),
+        )
+
+        session.add_character(char2)
+        assert char2 in session.character_ids
+        assert session.active_character_id == char1  # Didn't change active
+
+    def test_add_character_make_active(self):
+        """Adding character with make_active should switch."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            character_id=char1,
+            location_id=uuid4(),
+        )
+
+        session.add_character(char2, make_active=True)
+        assert session.active_character_id == char2
+
+    def test_switch_character(self):
+        """Should be able to switch active character."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            location_id=uuid4(),
+            character_ids=[char1, char2],
+            active_character_id=char1,
+        )
+
+        success = session.switch_character(char2)
+        assert success
+        assert session.active_character_id == char2
+
+    def test_switch_character_not_in_session(self):
+        """Switching to character not in session should fail."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            character_id=char1,
+            location_id=uuid4(),
+        )
+
+        success = session.switch_character(char2)
+        assert not success
+        assert session.active_character_id == char1
+
+    def test_remove_character(self):
+        """Should be able to remove characters."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            location_id=uuid4(),
+            character_ids=[char1, char2],
+            active_character_id=char1,
+        )
+
+        success = session.remove_character(char2)
+        assert success
+        assert char2 not in session.character_ids
+        assert session.active_character_id == char1
+
+    def test_remove_active_character_switches(self):
+        """Removing active character should switch to another."""
+        char1 = uuid4()
+        char2 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            location_id=uuid4(),
+            character_ids=[char1, char2],
+            active_character_id=char1,
+        )
+
+        session.remove_character(char1)
+        assert session.active_character_id == char2
+
+    def test_get_inactive_characters(self):
+        """Should get list of inactive characters."""
+        char1 = uuid4()
+        char2 = uuid4()
+        char3 = uuid4()
+        session = Session(
+            universe_id=uuid4(),
+            location_id=uuid4(),
+            character_ids=[char1, char2, char3],
+            active_character_id=char1,
+        )
+
+        inactive = session.get_inactive_characters()
+        assert char1 not in inactive
+        assert char2 in inactive
+        assert char3 in inactive
+
+    @pytest.mark.asyncio
+    async def test_engine_add_character(self):
+        """Engine should support adding characters to session."""
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+        engine = GameEngine(dolt=dolt, neo4j=neo4j)
+
+        char1 = uuid4()
+        char2 = uuid4()
+
+        session = await engine.start_session(
+            universe_id=uuid4(),
+            character_id=char1,
+            location_id=uuid4(),
+        )
+
+        success = engine.add_character_to_session(session.id, char2)
+        assert success
+        assert char2 in session.character_ids
+
+    @pytest.mark.asyncio
+    async def test_engine_switch_character(self):
+        """Engine should support switching active character."""
+        dolt = InMemoryDoltRepository()
+        neo4j = InMemoryNeo4jRepository()
+        engine = GameEngine(dolt=dolt, neo4j=neo4j)
+
+        char1 = uuid4()
+        char2 = uuid4()
+
+        session = await engine.start_session(
+            universe_id=uuid4(),
+            character_id=char1,
+            location_id=uuid4(),
+        )
+        engine.add_character_to_session(session.id, char2)
+
+        success = engine.switch_active_character(session.id, char2)
+        assert success
+        assert session.active_character_id == char2
+
+
 class TestGameEngineWithAgents:
     """Tests for GameEngine with agent system enabled."""
 
