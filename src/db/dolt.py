@@ -514,6 +514,39 @@ CREATE TABLE IF NOT EXISTS events (
     INDEX idx_location (location_id),
     INDEX idx_actor (actor_id)
 );
+
+-- NPC profiles (extends entities with personality data)
+CREATE TABLE IF NOT EXISTS npc_profiles (
+    entity_id VARCHAR(36) PRIMARY KEY,
+    traits JSON NOT NULL,
+    motivations JSON NOT NULL,
+    speech_style VARCHAR(50),
+    quirks JSON,
+    lawful_chaotic INT DEFAULT 0,
+    good_evil INT DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities(id)
+);
+
+-- NPC memories (for persistence, Neo4j handles search)
+CREATE TABLE IF NOT EXISTS npc_memories (
+    id VARCHAR(36) PRIMARY KEY,
+    npc_id VARCHAR(36) NOT NULL,
+    memory_type VARCHAR(50) NOT NULL,
+    subject_id VARCHAR(36),
+    description TEXT NOT NULL,
+    emotional_valence FLOAT DEFAULT 0,
+    importance FLOAT DEFAULT 0.5,
+    event_id VARCHAR(36),
+    timestamp DATETIME NOT NULL,
+    times_recalled INT DEFAULT 0,
+    last_recalled DATETIME,
+    INDEX idx_npc (npc_id),
+    INDEX idx_subject (subject_id),
+    INDEX idx_event (event_id),
+    FOREIGN KEY (npc_id) REFERENCES entities(id)
+);
 """
 
 

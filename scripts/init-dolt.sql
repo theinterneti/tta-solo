@@ -2,13 +2,25 @@
 --
 -- This script creates the core schema for the TTA-Solo game engine.
 -- Run automatically when the Dolt container starts.
+--
+-- SECURITY NOTE: Change default passwords in production!
+-- See .env.example for configuration.
 
 -- Create the database if it doesn't exist
 CREATE DATABASE IF NOT EXISTS tta_solo;
 USE tta_solo;
 
--- Initialize Dolt repository
-CALL DOLT_INIT();
+-- Initialize Dolt repository (safe to call if already initialized)
+-- Dolt containers auto-initialize, so we wrap in a handler
+DELIMITER //
+CREATE PROCEDURE init_dolt_if_needed()
+BEGIN
+    DECLARE CONTINUE HANDLER FOR SQLEXCEPTION BEGIN END;
+    CALL DOLT_INIT();
+END //
+DELIMITER ;
+CALL init_dolt_if_needed();
+DROP PROCEDURE IF EXISTS init_dolt_if_needed;
 
 -- Universes table (timeline branches)
 CREATE TABLE IF NOT EXISTS universes (

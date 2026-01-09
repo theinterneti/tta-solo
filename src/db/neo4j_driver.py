@@ -431,16 +431,24 @@ class Neo4jRepository:
 
 # Cypher statements for initializing Neo4j schema/indexes
 NEO4J_SCHEMA = [
-    # Indexes for efficient lookups
+    # Entity indexes
     "CREATE INDEX entity_id_index IF NOT EXISTS FOR (e:Entity) ON (e.id)",
     "CREATE INDEX entity_name_index IF NOT EXISTS FOR (e:Entity) ON (e.name)",
     "CREATE INDEX entity_universe_index IF NOT EXISTS FOR (e:Entity) ON (e.universe_id)",
     "CREATE INDEX entity_type_index IF NOT EXISTS FOR (e:Entity) ON (e.type)",
+    # Memory indexes (for NPC AI)
+    "CREATE INDEX memory_id_index IF NOT EXISTS FOR (m:Memory) ON (m.id)",
+    "CREATE INDEX memory_npc_index IF NOT EXISTS FOR (m:Memory) ON (m.npc_id)",
+    "CREATE INDEX memory_type_index IF NOT EXISTS FOR (m:Memory) ON (m.type)",
+    "CREATE INDEX memory_timestamp_index IF NOT EXISTS FOR (m:Memory) ON (m.timestamp)",
     # Relationship indexes
     "CREATE INDEX rel_universe_index IF NOT EXISTS FOR ()-[r:RELATES]-() ON (r.universe_id)",
     "CREATE INDEX rel_type_index IF NOT EXISTS FOR ()-[r:RELATES]-() ON (r.type)",
-    # Vector index for similarity search (requires Neo4j 5.x with GDS)
-    # Note: This requires the Graph Data Science library
+    # Constraints
+    "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
+    "CREATE CONSTRAINT memory_id_unique IF NOT EXISTS FOR (m:Memory) REQUIRE m.id IS UNIQUE",
+    # Vector index for similarity search (requires Neo4j 5.11+ with native vector support)
+    # Uncomment when vector embeddings are implemented:
     # "CALL db.index.vector.createNodeIndex('entityEmbeddings', 'Entity', 'embedding', 1536, 'cosine')",
 ]
 
