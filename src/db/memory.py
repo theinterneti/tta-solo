@@ -107,6 +107,14 @@ class InMemoryDoltRepository:
             return deepcopy(entity)
         return None
 
+    def get_entity_by_name(self, name: str, universe_id: UUID) -> Entity | None:
+        """Get an entity by name within a specific universe."""
+        branch_data = self._entities.get(self._current_branch, {})
+        for entity in branch_data.values():
+            if entity.name == name and entity.universe_id == universe_id:
+                return deepcopy(entity)
+        return None
+
     def get_entities_by_type(self, entity_type: str, universe_id: UUID) -> list[Entity]:
         """Get all entities of a given type in a universe."""
         branch_data = self._entities.get(self._current_branch, {})

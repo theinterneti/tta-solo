@@ -39,8 +39,8 @@ from src.engine.intent import (
 from src.engine.models import (
     Context,
     EngineConfig,
+    EngineForkResult,
     EntitySummary,
-    ForkResult,
     Intent,
     IntentType,
     RelationshipSummary,
@@ -87,7 +87,7 @@ __all__ = [
     "Context",
     "EngineConfig",
     "EntitySummary",
-    "ForkResult",
+    "EngineForkResult",
     "Intent",
     "IntentType",
     "RelationshipSummary",

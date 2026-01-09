@@ -9,7 +9,7 @@ Defines the core data structures for the game loop:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -188,7 +188,7 @@ class Turn(BaseModel):
     """A single player turn in the game loop."""
 
     id: UUID = Field(default_factory=uuid4)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Input
     player_input: str
@@ -251,7 +251,7 @@ class Session(BaseModel):
     )
 
     # Session state
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_turn_at: datetime | None = None
     turn_count: int = 0
 
@@ -352,8 +352,13 @@ class EngineConfig(BaseModel):
     strict_rules: bool = True
 
 
-class ForkResult(BaseModel):
-    """Result of a fork/branch operation from the game engine."""
+class EngineForkResult(BaseModel):
+    """
+    Result of a fork/branch operation from the game engine.
+
+    Note: Distinct from MultiverseForkResult in src/services/multiverse.py.
+    This version includes session-specific fields (new_session_id, narrative).
+    """
 
     success: bool
     new_universe_id: UUID | None = Field(

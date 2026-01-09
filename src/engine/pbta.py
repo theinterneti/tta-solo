@@ -96,8 +96,8 @@ class PbtAResult(BaseModel):
 
 # Threshold mapping: d20 result ranges to PbtA outcomes
 # We map the d20 system (1-20 + modifiers) to PbtA's 2d6 style outcomes
-# Using percentile mapping: bottom ~17% miss, middle ~25% weak hit, top ~58% strong hit
-# For d20 total: <10 = miss, 10-14 = weak hit, 15+ = strong hit
+# For a raw d20 roll: <10 = 45% miss (9/20), 10-14 = 25% weak hit (5/20), 15+ = 30% strong hit (6/20)
+# Note: With modifiers, actual percentages shift toward success
 PBTA_THRESHOLDS = {
     "miss": 10,  # Below this is a miss
     "weak_hit": 15,  # Below this (but >= miss) is weak hit

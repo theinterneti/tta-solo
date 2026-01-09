@@ -8,7 +8,7 @@ Implements the "Git for Fiction" concept from the multiverse spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from src.db.interfaces import DoltRepository, Neo4jRepository
 from src.models import (
+    Entity,
     Event,
     EventOutcome,
     EventType,
@@ -88,7 +89,7 @@ class MergeProposal(BaseModel):
     validation_passed: bool = Field(default=False)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     reviewed_at: datetime | None = None
     merged_at: datetime | None = None
 
@@ -274,8 +275,8 @@ class MultiverseService:
         traveler_copy.id = uuid4()
         traveler_copy.universe_id = destination_universe_id
         traveler_copy.current_location_id = None  # Must find new location
-        traveler_copy.created_at = datetime.utcnow()
-        traveler_copy.updated_at = datetime.utcnow()
+        traveler_copy.created_at = datetime.now(UTC)
+        traveler_copy.updated_at = datetime.now(UTC)
 
         # Save the copy in the destination
         self.dolt.checkout_branch(destination.dolt_branch)
@@ -332,7 +333,7 @@ class MultiverseService:
             return False  # Cannot archive Prime Material
 
         universe.status = UniverseStatus.ARCHIVED
-        universe.updated_at = datetime.utcnow()
+        universe.updated_at = datetime.now(UTC)
 
         self.dolt.checkout_branch(universe.dolt_branch)
         self.dolt.save_universe(universe)
@@ -382,7 +383,11 @@ class MultiverseService:
     # Phase 5: Merge/PR System for Canon
     # =========================================================================
 
-    # In-memory storage for proposals (would be persisted in production)
+    # Instance-level storage for merge proposals.
+    # In a production deployment, this would be persisted to the database.
+    # Each MultiverseService instance maintains its own proposal registry,
+    # keyed by proposal UUID for O(1) lookup.
+    # Note: Not thread-safe - synchronization needed for concurrent access.
     _proposals: dict[UUID, MergeProposal] = field(default_factory=dict)
 
     def propose_merge(
@@ -439,9 +444,10 @@ class MultiverseService:
 
         Checks:
         1. Source and target universes exist
-        2. Entities exist in source universe
-        3. No name conflicts in target universe
-        4. Target is an ancestor of source (can merge up the tree)
+        2. Target is an ancestor of source (can only merge up the tree)
+        3. Target universe is active
+        4. Entities exist in source universe
+        5. No name conflicts in target universe
 
         Args:
             proposal: The merge proposal to validate
@@ -463,6 +469,14 @@ class MultiverseService:
             conflicts.append(f"Target universe {proposal.target_universe_id} not found")
             return conflicts
 
+        # Check target is an ancestor of source (can only merge "up" the tree)
+        lineage = self.get_universe_lineage(proposal.source_universe_id)
+        lineage_ids = {u.id for u in lineage}
+        if proposal.target_universe_id not in lineage_ids:
+            conflicts.append(
+                "Target universe is not an ancestor of source - can only merge up the fork tree"
+            )
+
         # Check target is active
         if not target.is_active():
             conflicts.append(f"Target universe is not active (status: {target.status})")
@@ -481,22 +495,66 @@ class MultiverseService:
             )
 
         # Verify entities exist in source
+        # Verify entities exist in source and collect them by type
         self.dolt.checkout_branch(source.dolt_branch)
+        source_entities: dict[str, list[Entity]] = {}
         for entity_id in proposal.entity_ids:
             entity = self.dolt.get_entity(entity_id, proposal.source_universe_id)
             if entity is None:
                 conflicts.append(f"Entity {entity_id} not found in source universe")
             else:
-                # Check for name conflicts in target
+                entity_type = entity.type.value
+                if entity_type not in source_entities:
+                    source_entities[entity_type] = []
+                source_entities[entity_type].append(entity)
+
+        # Check for name conflicts in target (fetch each type only once)
+        self.dolt.checkout_branch(target.dolt_branch)
+        for entity_type, entities in source_entities.items():
+            target_entities = self.dolt.get_entities_by_type(
+                entity_type, proposal.target_universe_id
+            )
+            target_names = {e.name for e in target_entities}
+            for entity in entities:
+                if entity.name in target_names:
+                    conflicts.append(
+                        f"Entity '{entity.name}' already exists in target universe"
+                    )
+        # Track original branch to restore later
+        original_branch = getattr(self.dolt, "_current_branch", "main")
+
+        try:
+            # Verify entities exist in source and check for name conflicts
+            self.dolt.checkout_branch(source.dolt_branch)
+            entity_names_to_merge: list[str] = []
+
+            for entity_id in proposal.entity_ids:
+                entity = self.dolt.get_entity(entity_id, proposal.source_universe_id)
+                if entity is None:
+                    conflicts.append(f"Entity {entity_id} not found in source universe")
+                else:
+                    entity_names_to_merge.append(entity.name)
+
+            # Check for name conflicts in target (using name-based comparison)
+            if entity_names_to_merge:
                 self.dolt.checkout_branch(target.dolt_branch)
                 # In a real implementation, we'd check if an entity with the
                 # same name already exists in the target
                 existing = self.dolt.get_entity(entity_id, proposal.target_universe_id)
                 if existing is not None:
-                    conflicts.append(
-                        f"Entity '{entity.name}' already exists in target universe"
-                    )
+                    conflicts.append(f"Entity '{entity.name}' already exists in target universe")
                 self.dolt.checkout_branch(source.dolt_branch)
+                for name in entity_names_to_merge:
+                    existing = self.dolt.get_entity_by_name(
+                        name, proposal.target_universe_id
+                    )
+                    if existing is not None:
+                        conflicts.append(
+                            f"Entity with name '{name}' already exists in target universe"
+                        )
+        finally:
+            # Restore original branch
+            self.dolt.checkout_branch(original_branch)
 
         return conflicts
 
@@ -525,7 +583,7 @@ class MultiverseService:
 
         proposal.reviewer_id = reviewer_id
         proposal.review_notes = review_notes
-        proposal.reviewed_at = datetime.utcnow()
+        proposal.reviewed_at = datetime.now(UTC)
 
         if approved:
             if proposal.validation_passed:
@@ -576,6 +634,9 @@ class MultiverseService:
                 error="Source or target universe not found",
             )
 
+        # Track original branch to restore later
+        original_branch = getattr(self.dolt, "_current_branch", "main")
+
         entities_merged = 0
         entities_skipped = 0
         merged_names: list[str] = []
@@ -593,8 +654,8 @@ class MultiverseService:
             merged_entity = entity.model_copy(deep=True)
             merged_entity.id = uuid4()  # New ID in target
             merged_entity.universe_id = proposal.target_universe_id
-            merged_entity.created_at = datetime.utcnow()
-            merged_entity.updated_at = datetime.utcnow()
+            merged_entity.created_at = datetime.now(UTC)
+            merged_entity.updated_at = datetime.now(UTC)
 
             # Save to target
             self.dolt.checkout_branch(target.dolt_branch)
@@ -607,29 +668,99 @@ class MultiverseService:
                 variant_universe_id=proposal.target_universe_id,
                 changes={"merged_from": str(proposal.source_universe_id)},
             )
+        try:
+            # Copy each entity to the target
+            for entity_id in proposal.entity_ids:
+                self.dolt.checkout_branch(source.dolt_branch)
+                entity = self.dolt.get_entity(entity_id, proposal.source_universe_id)
 
-            entities_merged += 1
-            merged_names.append(entity.name)
+                if entity is None:
+                    entities_skipped += 1
+                    continue
+
+        # Determine outcome based on merge results
+        if entities_merged == 0:
+            outcome = EventOutcome.FAILURE
+            narrative_summary = "Merge failed: no entities were successfully merged"
+        elif entities_merged > 0 and entities_skipped > 0:
+            outcome = EventOutcome.PARTIAL
+            narrative_summary = (
+                f"Partial merge: {entities_merged} entities merged, "
+                f"{entities_skipped} skipped. Merged: {', '.join(merged_names)}"
+            )
+        else:
+            outcome = EventOutcome.SUCCESS
+            narrative_summary = f"Content merged from alternate timeline: {', '.join(merged_names)}"
 
         # Record the merge event
         merge_event = Event(
             universe_id=proposal.target_universe_id,
             event_type=EventType.MERGE,
             actor_id=proposal.submitter_id or uuid4(),
-            outcome=EventOutcome.SUCCESS,
+            outcome=outcome,
             payload={
                 "proposal_id": str(proposal_id),
                 "source_universe_id": str(proposal.source_universe_id),
                 "entities_merged": entities_merged,
+                "entities_skipped": entities_skipped,
                 "entity_names": merged_names,
             },
-            narrative_summary=f"Content merged from alternate timeline: {', '.join(merged_names)}",
+            narrative_summary=narrative_summary,
         )
         self.dolt.append_event(merge_event)
+                # Create a copy for the target universe
+                merged_entity = entity.model_copy(deep=True)
+                merged_entity.id = uuid4()  # New ID in target
+                merged_entity.universe_id = proposal.target_universe_id
+                merged_entity.created_at = datetime.now(UTC)
+                merged_entity.updated_at = datetime.now(UTC)
+
+                # Save to target
+                self.dolt.checkout_branch(target.dolt_branch)
+                self.dolt.save_entity(merged_entity)
+
+                # Create Neo4j variant relationship (tracks origin)
+                self.neo4j.create_variant_node(
+                    original_entity_id=entity_id,
+                    variant_entity_id=merged_entity.id,
+                    variant_universe_id=proposal.target_universe_id,
+                    changes={"merged_from": str(proposal.source_universe_id)},
+                )
+
+                entities_merged += 1
+                merged_names.append(entity.name)
+
+            # Determine outcome based on merge results
+            if entities_merged == 0:
+                outcome = EventOutcome.FAILURE
+            elif entities_skipped > 0:
+                outcome = EventOutcome.PARTIAL
+            else:
+                outcome = EventOutcome.SUCCESS
+
+            # Record the merge event
+            merge_event = Event(
+                universe_id=proposal.target_universe_id,
+                event_type=EventType.MERGE,
+                actor_id=proposal.submitter_id or uuid4(),
+                outcome=outcome,
+                payload={
+                    "proposal_id": str(proposal_id),
+                    "source_universe_id": str(proposal.source_universe_id),
+                    "entities_merged": entities_merged,
+                    "entities_skipped": entities_skipped,
+                    "entity_names": merged_names,
+                },
+                narrative_summary=f"Content merged from alternate timeline: {', '.join(merged_names)}" if merged_names else "Merge attempted but no entities were copied",
+            )
+            self.dolt.append_event(merge_event)
+        finally:
+            # Restore original branch
+            self.dolt.checkout_branch(original_branch)
 
         # Update proposal status
         proposal.status = MergeProposalStatus.MERGED
-        proposal.merged_at = datetime.utcnow()
+        proposal.merged_at = datetime.now(UTC)
 
         return MergeResult(
             success=True,
@@ -652,10 +783,7 @@ class MultiverseService:
         Returns:
             List of pending MergeProposal objects
         """
-        pending = [
-            p for p in self._proposals.values()
-            if p.status == MergeProposalStatus.PENDING
-        ]
+        pending = [p for p in self._proposals.values() if p.status == MergeProposalStatus.PENDING]
 
         if target_universe_id is not None:
             pending = [p for p in pending if p.target_universe_id == target_universe_id]

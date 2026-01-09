@@ -17,8 +17,8 @@ from src.engine.intent import HybridIntentParser, LLMProvider
 from src.engine.models import (
     Context,
     EngineConfig,
+    EngineForkResult,
     EntitySummary,
-    ForkResult,
     Intent,
     IntentType,
     RelationshipSummary,
@@ -333,7 +333,7 @@ class GameEngine:
         session_id: UUID,
         reason: str,
         fork_name: str | None = None,
-    ) -> ForkResult:
+    ) -> EngineForkResult:
         """
         Fork the timeline at the current point in the session.
 
@@ -346,11 +346,11 @@ class GameEngine:
             fork_name: Optional name for the new universe
 
         Returns:
-            ForkResult with the new universe and session, or error
+            EngineForkResult with the new universe and session, or error
         """
         session = self._sessions.get(session_id)
         if session is None:
-            return ForkResult(
+            return EngineForkResult(
                 success=False,
                 error="Session not found",
             )
@@ -380,7 +380,7 @@ class GameEngine:
         )
 
         if not fork_result.success or fork_result.universe is None:
-            return ForkResult(
+            return EngineForkResult(
                 success=False,
                 error=fork_result.error or "Failed to fork universe",
             )
@@ -392,7 +392,7 @@ class GameEngine:
             location_id=session.location_id,
         )
 
-        return ForkResult(
+        return EngineForkResult(
             success=True,
             new_universe_id=fork_result.universe.id,
             new_session_id=new_session.id,
