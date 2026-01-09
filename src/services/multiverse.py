@@ -498,6 +498,12 @@ class MultiverseService:
             # Check for name conflicts in target (using name-based comparison)
             if entity_names_to_merge:
                 self.dolt.checkout_branch(target.dolt_branch)
+                # In a real implementation, we'd check if an entity with the
+                # same name already exists in the target
+                existing = self.dolt.get_entity(entity_id, proposal.target_universe_id)
+                if existing is not None:
+                    conflicts.append(f"Entity '{entity.name}' already exists in target universe")
+                self.dolt.checkout_branch(source.dolt_branch)
                 for name in entity_names_to_merge:
                     existing = self.dolt.get_entity_by_name(
                         name, proposal.target_universe_id
@@ -595,6 +601,33 @@ class MultiverseService:
         entities_skipped = 0
         merged_names: list[str] = []
 
+        # Copy each entity to the target
+        for entity_id in proposal.entity_ids:
+            self.dolt.checkout_branch(source.dolt_branch)
+            entity = self.dolt.get_entity(entity_id, proposal.source_universe_id)
+
+            if entity is None:
+                entities_skipped += 1
+                continue
+
+            # Create a copy for the target universe
+            merged_entity = entity.model_copy(deep=True)
+            merged_entity.id = uuid4()  # New ID in target
+            merged_entity.universe_id = proposal.target_universe_id
+            merged_entity.created_at = datetime.now(UTC)
+            merged_entity.updated_at = datetime.now(UTC)
+
+            # Save to target
+            self.dolt.checkout_branch(target.dolt_branch)
+            self.dolt.save_entity(merged_entity)
+
+            # Create Neo4j variant relationship (tracks origin)
+            self.neo4j.create_variant_node(
+                original_entity_id=entity_id,
+                variant_entity_id=merged_entity.id,
+                variant_universe_id=proposal.target_universe_id,
+                changes={"merged_from": str(proposal.source_universe_id)},
+            )
         try:
             # Copy each entity to the target
             for entity_id in proposal.entity_ids:
@@ -680,10 +713,7 @@ class MultiverseService:
         Returns:
             List of pending MergeProposal objects
         """
-        pending = [
-            p for p in self._proposals.values()
-            if p.status == MergeProposalStatus.PENDING
-        ]
+        pending = [p for p in self._proposals.values() if p.status == MergeProposalStatus.PENDING]
 
         if target_universe_id is not None:
             pending = [p for p in pending if p.target_universe_id == target_universe_id]
