@@ -40,6 +40,15 @@ from src.models.event import (
     create_fork_event,
     create_travel_event,
 )
+from src.models.npc import (
+    MemoryType,
+    Motivation,
+    NPCMemory,
+    NPCProfile,
+    PersonalityTraits,
+    create_memory,
+    create_npc_profile,
+)
 from src.models.relationships import (
     FearsRelationship,
     KnowsRelationship,
@@ -73,6 +82,14 @@ __all__ = [
     "create_location",
     "create_item",
     "create_faction",
+    # NPC
+    "PersonalityTraits",
+    "Motivation",
+    "NPCProfile",
+    "MemoryType",
+    "NPCMemory",
+    "create_npc_profile",
+    "create_memory",
     # Event
     "Event",
     "EventType",
