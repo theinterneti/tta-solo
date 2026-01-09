@@ -10,7 +10,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import GameEngine
@@ -165,7 +165,10 @@ class GameREPL:
         if state.character_id is None:
             return "No character loaded."
 
-        character = state.engine.dolt.get_entity(state.character_id, state.universe_id or uuid4())
+        if state.universe_id is None:
+            return "No universe loaded."
+
+        character = state.engine.dolt.get_entity(state.character_id, state.universe_id)
 
         if character is None:
             return "Character not found."
@@ -221,8 +224,17 @@ class GameREPL:
         return "Game state saved. (Note: In-memory mode - data not persisted to disk)"
 
     def _cmd_fork(self, state: GameState, args: list[str]) -> str | None:
-        """Handle fork command - returns None to process as regular input."""
-        return None  # Let the engine handle it
+        """Handle fork command - returns None to let special fork logic handle it."""
+        # If no args provided, give usage hint
+        if not args:
+            return (
+                "To fork the timeline, provide a reason:\n"
+                "  /fork I attacked the stranger instead\n"
+                "  /fork what if I had joined the goblins\n\n"
+                "Or use natural language: 'what if I had...'"
+            )
+        # Let the fork logic in _process_input handle it
+        return None
 
     def _cmd_clear(self, state: GameState, args: list[str]) -> str | None:
         """Handle clear command."""
@@ -255,7 +267,8 @@ class GameREPL:
                 if result is not None:
                     return result
                 # Fall through to engine processing
-                text = cmd_name  # Use command name as input
+                # Preserve arguments for commands like /fork that need them
+                text = f"{cmd_name} {' '.join(args)}" if args else cmd_name
 
         # Handle fork command specially
         if text.lower().startswith("fork") or text.lower().startswith("what if"):
