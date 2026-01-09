@@ -455,6 +455,48 @@ class TestMergeProposals:
         assert proposal.status == MergeProposalStatus.CONFLICT
         assert "not found in source universe" in proposal.conflicts[0]
 
+    def test_propose_merge_detects_name_conflict(self, multiverse_service: MultiverseService):
+        """Proposal should detect when an entity with the same name exists in target."""
+        prime = multiverse_service.initialize_prime_material()
+
+        # Create an NPC in Prime
+        multiverse_service.dolt.checkout_branch("main")
+        npc_in_prime = create_character(universe_id=prime.id, name="Gandalf")
+        multiverse_service.dolt.save_entity(npc_in_prime)
+
+        # Create a fork
+        fork = multiverse_service.fork_universe(
+            parent_universe_id=prime.id,
+            new_universe_name="Fork with duplicate",
+            fork_reason="Testing name conflicts",
+        )
+        multiverse_service.dolt.checkout_branch("main")
+        multiverse_service.dolt.save_universe(fork.universe)
+
+        # Create a DIFFERENT entity with the SAME NAME in the fork
+        multiverse_service.dolt.checkout_branch(fork.universe.dolt_branch)
+        npc_in_fork = create_character(
+            universe_id=fork.universe.id, name="Gandalf", description="Different Gandalf"
+        )
+        multiverse_service.dolt.save_entity(npc_in_fork)
+
+        # Verify they have different IDs
+        assert npc_in_fork.id != npc_in_prime.id
+
+        # Propose merging the fork's entity back to prime - should detect name conflict
+        proposal = multiverse_service.propose_merge(
+            source_universe_id=fork.universe.id,
+            target_universe_id=prime.id,
+            entity_ids=[npc_in_fork.id],
+            title="Add Duplicate Gandalf",
+            description="This should fail due to name conflict",
+        )
+
+        assert proposal.status == MergeProposalStatus.CONFLICT
+        assert not proposal.validation_passed
+        assert len(proposal.conflicts) > 0
+        assert any("Gandalf" in conflict and "already exists" in conflict for conflict in proposal.conflicts)
+
     def test_review_proposal_approves(self, multiverse_service: MultiverseService):
         """Reviewing and approving a valid proposal should work."""
         prime = multiverse_service.initialize_prime_material()
