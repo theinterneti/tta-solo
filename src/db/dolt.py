@@ -115,7 +115,7 @@ class DoltRepository:
             self._execute_proc("dolt_checkout", (from_branch,))
 
         # Create the new branch
-        self._execute_proc("branch_name", (branch_name,))
+        self._execute_proc("dolt_branch", (branch_name,))
 
         # Return to original branch if needed
         if current != from_branch:
@@ -128,7 +128,7 @@ class DoltRepository:
     def branch_exists(self, branch_name: str) -> bool:
         """Check if a branch exists."""
         result = self._execute(
-            "SELECT name FROM branch_namees WHERE name = %s",
+            "SELECT name FROM dolt_branches WHERE name = %s",
             (branch_name,),
         )
         return len(result) > 0
@@ -140,7 +140,7 @@ class DoltRepository:
         if branch_name == self.get_current_branch():
             raise ValueError("Cannot delete the current branch")
 
-        self._execute_proc("branch_name", ("-D", branch_name))
+        self._execute_proc("dolt_branch", ("-D", branch_name))
 
     # =========================================================================
     # Universe Operations

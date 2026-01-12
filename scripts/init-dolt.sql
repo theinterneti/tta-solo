@@ -1,14 +1,15 @@
 -- TTA-Solo Dolt Database Initialization
 --
 -- This script creates the core schema for the TTA-Solo game engine.
--- Run automatically when the Dolt container starts.
+-- NOTE: This file is for reference only. The actual init is done by init-dolt.sh
+-- which uses environment variables for credentials.
 --
--- SECURITY NOTE: Change default passwords in production!
--- See .env.example for configuration.
+-- SECURITY WARNING: Do NOT use this file directly in production!
+-- The shell script (init-dolt.sh) reads DOLT_ROOT_PASSWORD from environment.
 
 -- Create a user for external connections (Python app)
--- Note: Password matches DOLT_ROOT_PASSWORD from docker-compose.yml
-CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'doltpass';
+-- In production, use init-dolt.sh which reads password from DOLT_ROOT_PASSWORD env var
+CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'CHANGE_IN_PRODUCTION';
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';
 FLUSH PRIVILEGES;
 

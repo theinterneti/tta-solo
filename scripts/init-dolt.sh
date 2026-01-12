@@ -6,8 +6,12 @@ set -e
 
 echo "Initializing TTA-Solo database..."
 
+# Use environment variable for password, with fallback for local dev
+DOLT_APP_PASSWORD="${DOLT_ROOT_PASSWORD:-doltpass}"
+
 # Create user for external connections
-dolt sql -q "CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'doltpass'"
+# NOTE: In production, restrict host and use strong password via DOLT_ROOT_PASSWORD env var
+dolt sql -q "CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${DOLT_APP_PASSWORD}'"
 dolt sql -q "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"
 dolt sql -q "FLUSH PRIVILEGES"
 
