@@ -12,6 +12,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from src.models import Entity, Event, Relationship, Universe
+    from src.models.npc import NPCMemory
 
 
 class DoltRepository(Protocol):
@@ -197,4 +198,34 @@ class Neo4jRepository(Protocol):
 
         Returns list of (entity_id, similarity_score) tuples.
         """
+        ...
+
+    # NPC Memory operations
+    def create_memory(self, memory: NPCMemory) -> None:
+        """Create a new NPC memory node."""
+        ...
+
+    def get_memories_for_npc(
+        self,
+        npc_id: UUID,
+        limit: int = 20,
+    ) -> list[NPCMemory]:
+        """Get all memories for an NPC, ordered by timestamp (newest first)."""
+        ...
+
+    def get_memories_about_entity(
+        self,
+        npc_id: UUID,
+        subject_id: UUID,
+        limit: int = 10,
+    ) -> list[NPCMemory]:
+        """Get an NPC's memories about a specific entity."""
+        ...
+
+    def update_memory_recall(self, memory_id: UUID) -> None:
+        """Update the recall tracking for a memory (increment times_recalled, update last_recalled)."""
+        ...
+
+    def delete_memory(self, memory_id: UUID) -> None:
+        """Delete a memory."""
         ...
