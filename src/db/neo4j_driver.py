@@ -424,9 +424,11 @@ class Neo4jRepository:
         })
         CREATE (npc)-[:REMEMBERS]->(m)
         WITH m
-        MATCH (subject:Entity {id: $subject_id})
-        WHERE $subject_id IS NOT NULL
-        CREATE (m)-[:ABOUT]->(subject)
+        // Only create ABOUT relationship if subject_id is provided
+        FOREACH (_ IN CASE WHEN $subject_id IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (subject:Entity {id: $subject_id})
+            CREATE (m)-[:ABOUT]->(subject)
+        )
         """
         self._run_write(
             query,

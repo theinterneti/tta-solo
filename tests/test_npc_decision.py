@@ -649,7 +649,15 @@ class TestMemoryRetrieval:
 
 
 class TestKeywordExtraction:
-    """Tests for keyword extraction and relevance helpers."""
+    """
+    Tests for keyword extraction and relevance helpers.
+
+    Note: We test these underscore-prefixed functions directly because they are
+    pure utility functions with well-defined inputs/outputs. While underscore
+    prefix conventionally indicates internal use, Python doesn't enforce privacy,
+    and direct testing of these helpers ensures correctness of the relevance
+    scoring algorithm independent of the higher-level memory retrieval API.
+    """
 
     def test_extract_keywords_basic(self) -> None:
         """Test basic keyword extraction."""

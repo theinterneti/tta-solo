@@ -773,11 +773,12 @@ class GameEngine:
             if npc_id == session.character_id:
                 continue
 
-            # Skip the event actor (they already know what they did)
-            if npc_id == event.actor_id:
-                continue
+            # Note: We DO form memories for the event actor (self-memories).
+            # NPCs should remember their own significant actions for self-reflection
+            # and behavioral consistency. The memory importance calculation in
+            # form_memory() will handle filtering trivial self-actions.
 
-            # Form memory for this NPC witnessing the event
+            # Form memory for this NPC witnessing or performing the event
             memory_result = self.npc_service.form_memory(npc_id, event)
 
             if memory_result.formed and memory_result.memory:
@@ -821,7 +822,8 @@ class GameEngine:
             return {"action": None, "description": "NPC not found"}
 
         # Build NPC profile (use stored profile or create default)
-        # Future: Store NPCProfile in entity.payload
+        # FIXME: Currently creates default profile with all traits at 50.
+        # Should load actual profile from entity.payload or npc_profiles table.
         profile = create_npc_profile(npc_id)
 
         # Get entities present

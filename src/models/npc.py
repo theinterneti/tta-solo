@@ -472,6 +472,13 @@ class ActionOption(BaseModel):
     action is typically selected (with some randomness based on personality).
     """
 
+    # Action scoring weights - these control how different factors influence decisions
+    # Motivation is weighted highest because NPCs should primarily act on their goals
+    WEIGHT_MOTIVATION: float = 0.35  # How well the action serves NPC's goals
+    WEIGHT_RELATIONSHIP: float = 0.25  # Impact on relationships
+    WEIGHT_PERSONALITY: float = 0.25  # Consistency with personality traits
+    WEIGHT_RISK: float = 0.15  # Risk aversion (inverted in calculation)
+
     action_type: ActionType
     target_id: UUID | None = None
     description: str
@@ -494,17 +501,13 @@ class ActionOption(BaseModel):
         """
         Combined score for action selection.
 
-        Weights per spec:
-        - motivation_score: 35%
-        - relationship_score: 25%
-        - personality_score: 25%
-        - risk_score: 15% (inverted: lower risk = better)
+        Uses class-level weight constants. Risk is inverted so lower risk = better.
         """
         return (
-            self.motivation_score * 0.35
-            + self.relationship_score * 0.25
-            + self.personality_score * 0.25
-            + (1.0 - self.risk_score) * 0.15
+            self.motivation_score * self.WEIGHT_MOTIVATION
+            + self.relationship_score * self.WEIGHT_RELATIONSHIP
+            + self.personality_score * self.WEIGHT_PERSONALITY
+            + (1.0 - self.risk_score) * self.WEIGHT_RISK
         )
 
 

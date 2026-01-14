@@ -38,6 +38,19 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# Constants
+# =============================================================================
+
+# Decision-making thresholds
+ERRATIC_NEUROTICISM_THRESHOLD = 70  # NPCs above this are more unpredictable
+ERRATIC_CHOICE_PROBABILITY = 0.2  # Chance for erratic NPC to pick suboptimal action
+THREAT_THRESHOLD = 0.5  # Entities above this apparent_threat are considered threatening
+
+# Memory retrieval
+MEMORY_PREFETCH_MULTIPLIER = 3  # Fetch this many times the limit for scoring/filtering
+
+
+# =============================================================================
 # Text Relevance Helpers
 # =============================================================================
 
@@ -123,7 +136,13 @@ def _calculate_keyword_relevance(
 
     # Scale to 0.0-1.0 range with a boost for any overlap
     base_score = overlap / union
-    # Boost: any overlap is significant
+
+    # Boost: any overlap is significant.
+    # - base_score is a Jaccard-like overlap in [0.0, 1.0].
+    # - For overlap == 0 we keep the score at or below 0.3 (see early returns).
+    # - For overlap > 0 we map base_score into [0.3, 1.0] via 0.3 + 0.7 * base_score,
+    #   so any overlapping memory is guaranteed at least 0.3 relevance while still
+    #   preserving the relative strength of the overlap in the upper part of the range.
     if overlap > 0:
         base_score = 0.3 + (0.7 * base_score)
 
@@ -386,7 +405,7 @@ def _assess_risk(
     base_risk += context.danger_level / 40  # 0-0.5 bonus
 
     # Many enemies increases risk
-    enemies = [e for e in context.entities_present if e.apparent_threat > 0.5]
+    enemies = [e for e in context.entities_present if e.apparent_threat > THREAT_THRESHOLD]
     if len(enemies) > 1:
         base_risk += 0.1 * len(enemies)
 
@@ -473,11 +492,11 @@ class NPCService:
         options.sort(key=lambda x: x.total_score, reverse=True)
 
         # Add some randomness based on personality
-        # High neuroticism = more erratic choices (20% chance to pick second-best)
+        # High neuroticism = more erratic choices
         if (
-            context.npc_profile.traits.neuroticism > 70
+            context.npc_profile.traits.neuroticism > ERRATIC_NEUROTICISM_THRESHOLD
             and len(options) > 1
-            and random.random() < 0.2
+            and random.random() < ERRATIC_CHOICE_PROBABILITY
         ):
             options[0], options[1] = options[1], options[0]
 
@@ -498,7 +517,7 @@ class NPCService:
 
         if action_type in [ActionType.ATTACK, ActionType.THREATEN, ActionType.INTIMIDATE]:
             # Target most threatening entity
-            threats = [e for e in entities if e.apparent_threat > 0.5 and not e.is_player]
+            threats = [e for e in entities if e.apparent_threat > THREAT_THRESHOLD and not e.is_player]
             if threats:
                 threats.sort(key=lambda x: x.apparent_threat, reverse=True)
                 return threats[0].id
@@ -813,12 +832,12 @@ class NPCService:
             memories = self.neo4j.get_memories_about_entity(
                 npc_id=npc_id,
                 subject_id=subject_id,
-                limit=limit * 3,  # Fetch more to allow scoring
+                limit=limit * MEMORY_PREFETCH_MULTIPLIER,  # Fetch more to allow scoring
             )
         else:
             memories = self.neo4j.get_memories_for_npc(
                 npc_id=npc_id,
-                limit=limit * 3,
+                limit=limit * MEMORY_PREFETCH_MULTIPLIER,
             )
 
         if not memories:
