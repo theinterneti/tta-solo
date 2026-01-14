@@ -14,6 +14,7 @@ from uuid import UUID
 from neo4j import Driver, GraphDatabase, Query, Session
 
 from src.models import Relationship, RelationshipType
+from src.models.npc import MemoryType, NPCMemory
 
 
 class Neo4jConnection:
@@ -399,6 +400,142 @@ class Neo4jRepository:
             },
         )
         return [(UUID(r["id"]), r["similarity"]) for r in results]
+
+    # =========================================================================
+    # NPC Memory Operations
+    # =========================================================================
+
+    def create_memory(self, memory: NPCMemory) -> None:
+        """Create a new NPC memory node."""
+        query = """
+        MERGE (npc:Entity {id: $npc_id})
+        CREATE (m:Memory {
+            id: $id,
+            npc_id: $npc_id,
+            type: $memory_type,
+            subject_id: $subject_id,
+            description: $description,
+            emotional_valence: $emotional_valence,
+            importance: $importance,
+            event_id: $event_id,
+            timestamp: datetime($timestamp),
+            times_recalled: $times_recalled,
+            last_recalled: $last_recalled
+        })
+        CREATE (npc)-[:REMEMBERS]->(m)
+        WITH m
+        // Only create ABOUT relationship if subject_id is provided
+        FOREACH (_ IN CASE WHEN $subject_id IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (subject:Entity {id: $subject_id})
+            CREATE (m)-[:ABOUT]->(subject)
+        )
+        """
+        self._run_write(
+            query,
+            {
+                "id": str(memory.id),
+                "npc_id": str(memory.npc_id),
+                "memory_type": memory.memory_type.value,
+                "subject_id": str(memory.subject_id) if memory.subject_id else None,
+                "description": memory.description,
+                "emotional_valence": memory.emotional_valence,
+                "importance": memory.importance,
+                "event_id": str(memory.event_id) if memory.event_id else None,
+                "timestamp": memory.timestamp.isoformat(),
+                "times_recalled": memory.times_recalled,
+                "last_recalled": memory.last_recalled.isoformat() if memory.last_recalled else None,
+            },
+        )
+
+    def get_memories_for_npc(
+        self,
+        npc_id: UUID,
+        limit: int = 20,
+    ) -> list[NPCMemory]:
+        """Get all memories for an NPC, ordered by timestamp (newest first)."""
+        query = """
+        MATCH (npc:Entity {id: $npc_id})-[:REMEMBERS]->(m:Memory)
+        RETURN m
+        ORDER BY m.timestamp DESC
+        LIMIT $limit
+        """
+        results = self._run_query(
+            query,
+            {"npc_id": str(npc_id), "limit": limit},
+        )
+        return [self._record_to_memory(r["m"]) for r in results]
+
+    def get_memories_about_entity(
+        self,
+        npc_id: UUID,
+        subject_id: UUID,
+        limit: int = 10,
+    ) -> list[NPCMemory]:
+        """Get an NPC's memories about a specific entity."""
+        query = """
+        MATCH (npc:Entity {id: $npc_id})-[:REMEMBERS]->(m:Memory)-[:ABOUT]->(subject:Entity {id: $subject_id})
+        RETURN m
+        ORDER BY m.timestamp DESC
+        LIMIT $limit
+        """
+        results = self._run_query(
+            query,
+            {
+                "npc_id": str(npc_id),
+                "subject_id": str(subject_id),
+                "limit": limit,
+            },
+        )
+        return [self._record_to_memory(r["m"]) for r in results]
+
+    def update_memory_recall(self, memory_id: UUID) -> None:
+        """Update the recall tracking for a memory."""
+        query = """
+        MATCH (m:Memory {id: $memory_id})
+        SET m.times_recalled = m.times_recalled + 1,
+            m.last_recalled = datetime()
+        """
+        self._run_write(query, {"memory_id": str(memory_id)})
+
+    def delete_memory(self, memory_id: UUID) -> None:
+        """Delete a memory."""
+        query = """
+        MATCH (m:Memory {id: $memory_id})
+        DETACH DELETE m
+        """
+        self._run_write(query, {"memory_id": str(memory_id)})
+
+    def _record_to_memory(self, record: dict[str, Any]) -> NPCMemory:
+        """Convert a Neo4j record to an NPCMemory object."""
+        # Parse datetime fields
+        timestamp_raw = record.get("timestamp")
+        if timestamp_raw is not None and hasattr(timestamp_raw, "to_native"):
+            timestamp = timestamp_raw.to_native()
+        elif isinstance(timestamp_raw, datetime):
+            timestamp = timestamp_raw
+        else:
+            timestamp = datetime.now(UTC)
+
+        last_recalled_raw = record.get("last_recalled")
+        last_recalled: datetime | None = None
+        if last_recalled_raw is not None and hasattr(last_recalled_raw, "to_native"):
+            last_recalled = last_recalled_raw.to_native()
+        elif isinstance(last_recalled_raw, datetime):
+            last_recalled = last_recalled_raw
+
+        return NPCMemory(
+            id=UUID(record["id"]),
+            npc_id=UUID(record["npc_id"]),
+            memory_type=MemoryType(record["type"]),
+            subject_id=UUID(record["subject_id"]) if record.get("subject_id") else None,
+            description=record["description"],
+            emotional_valence=record.get("emotional_valence", 0.0),
+            importance=record.get("importance", 0.5),
+            event_id=UUID(record["event_id"]) if record.get("event_id") else None,
+            timestamp=timestamp,
+            times_recalled=record.get("times_recalled", 0),
+            last_recalled=last_recalled,
+        )
 
     # =========================================================================
     # Entity Registration (for metadata lookups)

@@ -390,3 +390,343 @@ def create_memory(
         importance=importance,
         event_id=event_id,
     )
+
+
+# =============================================================================
+# Decision Making Models (Phase 2)
+# =============================================================================
+
+
+class EntitySummary(BaseModel):
+    """
+    Lightweight summary of an entity for NPC decision context.
+
+    Used to provide relevant info without loading full entity data.
+    """
+
+    id: UUID
+    name: str
+    entity_type: str  # "character", "location", "item", "faction"
+    description: str = ""
+    is_player: bool = False
+
+    # For characters
+    hp_percentage: float | None = None  # 0.0 to 1.0
+    apparent_threat: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="How threatening this entity appears"
+    )
+
+
+class RelationshipSummary(BaseModel):
+    """
+    Lightweight summary of a relationship for NPC decision context.
+    """
+
+    target_id: UUID
+    target_name: str
+    relationship_type: str  # e.g., "ALLIED_WITH", "HOSTILE_TO"
+    strength: float = Field(ge=0.0, le=1.0, default=1.0)
+    trust: float = Field(ge=-1.0, le=1.0, default=0.0)
+
+
+class ActionType(str, Enum):
+    """Types of actions an NPC can take."""
+
+    # Combat
+    ATTACK = "attack"
+    DEFEND = "defend"
+    FLEE = "flee"
+    HIDE = "hide"
+    SURRENDER = "surrender"
+
+    # Social
+    NEGOTIATE = "negotiate"
+    THREATEN = "threaten"
+    DECEIVE = "deceive"
+    PERSUADE = "persuade"
+    INTIMIDATE = "intimidate"
+
+    # Helpful
+    HELP = "help"
+    HEAL = "heal"
+    SHARE = "share"
+    WARN = "warn"
+    PROTECT = "protect"
+
+    # Neutral
+    OBSERVE = "observe"
+    WAIT = "wait"
+    IGNORE = "ignore"
+
+    # Movement
+    APPROACH = "approach"
+    RETREAT = "retreat"
+    FOLLOW = "follow"
+
+
+class ActionOption(BaseModel):
+    """
+    A potential action an NPC can take.
+
+    The symbolic layer calculates scores, and the highest-scoring
+    action is typically selected (with some randomness based on personality).
+    """
+
+    # Action scoring weights - these control how different factors influence decisions
+    # Motivation is weighted highest because NPCs should primarily act on their goals
+    WEIGHT_MOTIVATION: float = 0.35  # How well the action serves NPC's goals
+    WEIGHT_RELATIONSHIP: float = 0.25  # Impact on relationships
+    WEIGHT_PERSONALITY: float = 0.25  # Consistency with personality traits
+    WEIGHT_RISK: float = 0.15  # Risk aversion (inverted in calculation)
+
+    action_type: ActionType
+    target_id: UUID | None = None
+    description: str
+
+    # Scores (calculated by symbolic layer)
+    motivation_score: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    """How well does this serve the NPC's goals?"""
+
+    relationship_score: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    """How does this affect relationships?"""
+
+    personality_score: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    """How consistent with personality?"""
+
+    risk_score: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    """How dangerous is this? (higher = more risky)"""
+
+    @property
+    def total_score(self) -> float:
+        """
+        Combined score for action selection.
+
+        Uses class-level weight constants. Risk is inverted so lower risk = better.
+        """
+        return (
+            self.motivation_score * self.WEIGHT_MOTIVATION
+            + self.relationship_score * self.WEIGHT_RELATIONSHIP
+            + self.personality_score * self.WEIGHT_PERSONALITY
+            + (1.0 - self.risk_score) * self.WEIGHT_RISK
+        )
+
+
+class NPCDecisionContext(BaseModel):
+    """
+    Everything an NPC knows when making a decision.
+
+    This is the input to the decision-making system.
+    """
+
+    # Self
+    npc_id: UUID
+    npc_profile: NPCProfile
+    hp_percentage: float = Field(ge=0.0, le=1.0, default=1.0)
+    resources_available: float = Field(
+        ge=0.0, le=1.0, default=1.0, description="Spell slots, abilities, etc."
+    )
+
+    # Environment
+    location_name: str = ""
+    danger_level: int = Field(ge=0, le=20, default=0)
+    entities_present: list[EntitySummary] = Field(default_factory=list)
+    escape_routes: int = Field(ge=0, default=1)
+
+    # Social
+    relationships: list[RelationshipSummary] = Field(default_factory=list)
+    relevant_memories: list[NPCMemory] = Field(default_factory=list)
+
+    # Situation
+    current_events: list[str] = Field(
+        default_factory=list, description="What's happening right now"
+    )
+    player_action: str | None = None  # Natural language description
+
+
+# =============================================================================
+# Combat AI Models
+# =============================================================================
+
+
+class CombatState(str, Enum):
+    """NPC combat behavior states."""
+
+    AGGRESSIVE = "aggressive"  # Attack strongest threat
+    DEFENSIVE = "defensive"  # Protect self, counterattack only
+    TACTICAL = "tactical"  # Use positioning and abilities strategically
+    SUPPORTIVE = "supportive"  # Help allies, heal, buff
+    FLEEING = "fleeing"  # Trying to escape
+    SURRENDERING = "surrendering"  # Giving up
+
+
+class CombatEvaluation(BaseModel):
+    """NPC's assessment of the current combat situation."""
+
+    # Self assessment
+    hp_percentage: Annotated[float, Field(ge=0.0, le=1.0)]
+    resources_remaining: Annotated[float, Field(ge=0.0, le=1.0)] = 1.0
+    escape_routes: int = Field(ge=0, default=1)
+
+    # Threat assessment
+    enemies_count: int = Field(ge=0, default=0)
+    strongest_enemy_threat: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    total_enemy_threat: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+
+    # Ally assessment
+    allies_count: int = Field(ge=0, default=0)
+    ally_health_average: Annotated[float, Field(ge=0.0, le=1.0)] = 1.0
+
+    @property
+    def should_flee(self) -> bool:
+        """Determine if NPC should attempt to flee."""
+        return (
+            self.hp_percentage < 0.25
+            and self.total_enemy_threat > 0.5
+            and self.escape_routes > 0
+        )
+
+    @property
+    def should_surrender(self) -> bool:
+        """Determine if NPC should surrender."""
+        return (
+            self.hp_percentage < 0.1
+            and self.escape_routes == 0
+            and self.allies_count == 0
+        )
+
+
+def get_combat_state(
+    npc_profile: NPCProfile,
+    evaluation: CombatEvaluation,
+) -> CombatState:
+    """
+    Determine combat behavior based on personality and situation.
+
+    Args:
+        npc_profile: The NPC's personality profile
+        evaluation: Current combat situation assessment
+
+    Returns:
+        The recommended combat state
+    """
+    # Cowardly NPCs flee earlier (high neuroticism = lower threshold)
+    flee_threshold = 0.25 + (npc_profile.traits.neuroticism / 200)
+
+    # Check surrender first (most desperate)
+    if evaluation.should_surrender:
+        return CombatState.SURRENDERING
+
+    # Check flee conditions
+    if evaluation.hp_percentage < flee_threshold:
+        if evaluation.escape_routes > 0:
+            return CombatState.FLEEING
+        return CombatState.SURRENDERING
+
+    # Aggressive NPCs (low agreeableness) attack more
+    if npc_profile.traits.agreeableness < 30:
+        return CombatState.AGGRESSIVE
+
+    # Protective NPCs (high agreeableness) support allies
+    if evaluation.allies_count > 0 and npc_profile.traits.agreeableness > 70:
+        return CombatState.SUPPORTIVE
+
+    # Default to tactical
+    return CombatState.TACTICAL
+
+
+# =============================================================================
+# Dialogue Generation Models
+# =============================================================================
+
+
+class DialogueConstraints(BaseModel):
+    """
+    Constraints for LLM dialogue generation.
+
+    The symbolic layer builds these constraints, then the neural layer
+    uses them to generate personality-consistent dialogue.
+    """
+
+    # From personality
+    speech_style: str = "neutral"
+    verbosity: str = "normal"  # "terse", "normal", "verbose"
+    formality: str = "neutral"  # "casual", "neutral", "formal"
+
+    # From relationship
+    attitude_toward_player: str = "neutral"  # "friendly", "neutral", "hostile"
+    trust_level: str = "guarded"  # "trusting", "guarded", "suspicious"
+
+    # From situation
+    emotional_state: str = "calm"  # "calm", "angry", "afraid", "happy"
+    urgency: str = "normal"  # "relaxed", "normal", "urgent"
+
+    # Content constraints
+    topics_to_mention: list[str] = Field(default_factory=list)
+    topics_to_avoid: list[str] = Field(default_factory=list)
+    secrets_known: list[str] = Field(default_factory=list)
+    lies_to_tell: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_context(
+        cls,
+        profile: NPCProfile,
+        player_trust: float = 0.0,
+        emotional_valence: float = 0.0,
+        in_combat: bool = False,
+    ) -> DialogueConstraints:
+        """
+        Build dialogue constraints from NPC profile and context.
+
+        Args:
+            profile: The NPC's personality profile
+            player_trust: Trust level toward player (-1 to 1)
+            emotional_valence: Current emotional state (-1 to 1)
+            in_combat: Whether currently in combat
+
+        Returns:
+            DialogueConstraints for LLM prompting
+        """
+        # Derive verbosity from extraversion
+        verbosity = profile.traits.get_speech_verbosity()
+
+        # Derive formality from conscientiousness
+        formality = profile.traits.get_formality()
+
+        # Derive attitude from trust
+        if player_trust > 0.5:
+            attitude = "friendly"
+        elif player_trust < -0.5:
+            attitude = "hostile"
+        else:
+            attitude = "neutral"
+
+        # Derive trust level
+        if player_trust > 0.3:
+            trust_level = "trusting"
+        elif player_trust < -0.3:
+            trust_level = "suspicious"
+        else:
+            trust_level = "guarded"
+
+        # Derive emotional state
+        if in_combat and emotional_valence < 0:
+            emotional_state = "angry"
+        elif emotional_valence > 0.5:
+            emotional_state = "happy"
+        elif emotional_valence < -0.5:
+            emotional_state = "afraid" if profile.traits.neuroticism > 50 else "angry"
+        else:
+            emotional_state = "calm"
+
+        # Urgency based on combat
+        urgency = "urgent" if in_combat else "normal"
+
+        return cls(
+            speech_style=profile.speech_style,
+            verbosity=verbosity,
+            formality=formality,
+            attitude_toward_player=attitude,
+            trust_level=trust_level,
+            emotional_state=emotional_state,
+            urgency=urgency,
+        )

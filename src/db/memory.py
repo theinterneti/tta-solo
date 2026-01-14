@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import UUID
 
 from src.models import Entity, Event, Relationship, Universe
+from src.models.npc import NPCMemory
 
 
 class InMemoryDoltRepository:
@@ -204,6 +205,9 @@ class InMemoryNeo4jRepository:
 
         # Mock embeddings for similarity search
         self._embeddings: dict[UUID, list[float]] = {}
+
+        # NPC memories stored by ID
+        self._memories: dict[UUID, NPCMemory] = {}
 
     def create_relationship(self, relationship: Relationship) -> None:
         """Create a relationship between two entities."""
@@ -412,3 +416,44 @@ class InMemoryNeo4jRepository:
             return 0.0
 
         return dot_product / (norm_a * norm_b)
+
+    # NPC Memory operations
+    def create_memory(self, memory: NPCMemory) -> None:
+        """Create a new NPC memory node."""
+        self._memories[memory.id] = deepcopy(memory)
+
+    def get_memories_for_npc(
+        self,
+        npc_id: UUID,
+        limit: int = 20,
+    ) -> list[NPCMemory]:
+        """Get all memories for an NPC, ordered by timestamp (newest first)."""
+        memories = [
+            deepcopy(m) for m in self._memories.values() if m.npc_id == npc_id
+        ]
+        memories.sort(key=lambda m: m.timestamp, reverse=True)
+        return memories[:limit]
+
+    def get_memories_about_entity(
+        self,
+        npc_id: UUID,
+        subject_id: UUID,
+        limit: int = 10,
+    ) -> list[NPCMemory]:
+        """Get an NPC's memories about a specific entity."""
+        memories = [
+            deepcopy(m)
+            for m in self._memories.values()
+            if m.npc_id == npc_id and m.subject_id == subject_id
+        ]
+        memories.sort(key=lambda m: m.timestamp, reverse=True)
+        return memories[:limit]
+
+    def update_memory_recall(self, memory_id: UUID) -> None:
+        """Update the recall tracking for a memory."""
+        if memory_id in self._memories:
+            self._memories[memory_id].recall()
+
+    def delete_memory(self, memory_id: UUID) -> None:
+        """Delete a memory."""
+        self._memories.pop(memory_id, None)

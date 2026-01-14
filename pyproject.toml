@@ -12,6 +12,7 @@ dependencies = [
     "neo4j>=5.0",
     "mysql-connector-python>=8.0",  # For Dolt connection
     "python-dotenv>=1.0",
+    "openai>=2.15.0",
 ]
 
 [project.optional-dependencies]
