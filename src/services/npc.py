@@ -8,7 +8,7 @@ This is the symbolic layer that drives NPC intelligence.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -34,7 +34,7 @@ from src.models.npc import (
 from src.models.relationships import RelationshipType
 
 if TYPE_CHECKING:
-    pass
+    from src.services.llm import LLMService
 
 
 # =============================================================================
@@ -409,10 +409,15 @@ class NPCService:
 
     Handles decision-making, memory formation, and behavior generation
     using the neuro-symbolic approach.
+
+    The service uses a hybrid approach:
+    - Symbolic layer: Personality, relationships, decision scoring
+    - Neural layer: LLM-powered dialogue generation (optional)
     """
 
     dolt: DoltRepository
     neo4j: Neo4jRepository
+    llm: LLMService | None = field(default=None)
 
     def decide_action(
         self,
@@ -844,3 +849,135 @@ class NPCService:
             result.append(memory)
 
         return result
+
+    async def generate_dialogue(
+        self,
+        npc_id: UUID,
+        player_input: str,
+        profile: NPCProfile,
+        relationships: list[RelationshipSummary],
+        situation: str,
+        in_combat: bool = False,
+    ) -> str:
+        """
+        Generate NPC dialogue response using LLM.
+
+        Uses personality constraints to guide the LLM output,
+        ensuring responses are consistent with the NPC's character.
+
+        Args:
+            npc_id: The NPC generating dialogue
+            player_input: What the player said
+            profile: NPC's personality profile
+            relationships: Relevant relationships
+            situation: Description of current situation
+            in_combat: Whether currently in combat
+
+        Returns:
+            Generated dialogue response, or fallback if LLM unavailable
+        """
+        # Retrieve relevant memories
+        memories = self.retrieve_memories(npc_id, player_input, limit=5)
+
+        # Build dialogue constraints
+        constraints = self.build_dialogue_constraints(
+            profile=profile,
+            relationships=relationships,
+            memories=memories,
+            in_combat=in_combat,
+        )
+
+        # If no LLM available, use fallback
+        if self.llm is None or not self.llm.is_available:
+            return self._fallback_dialogue(profile, constraints, player_input)
+
+        # Get NPC name (would need entity lookup in real implementation)
+        npc_name = f"NPC-{str(npc_id)[:8]}"
+        npc_description = f"a {constraints.speech_style} character"
+
+        # Format memories for prompt
+        memory_strings = [m.description for m in memories]
+
+        # Format constraints
+        constraint_strings = []
+        if constraints.topics_to_mention:
+            constraint_strings.append(
+                f"Try to mention: {', '.join(constraints.topics_to_mention[:3])}"
+            )
+        if constraints.topics_to_avoid:
+            constraint_strings.append(
+                f"Avoid mentioning: {', '.join(constraints.topics_to_avoid[:3])}"
+            )
+
+        try:
+            return await self.llm.generate_dialogue(
+                npc_name=npc_name,
+                npc_description=npc_description,
+                speech_style=constraints.speech_style,
+                verbosity=constraints.verbosity,
+                formality=constraints.formality,
+                attitude=constraints.attitude_toward_player,
+                trust_level=constraints.trust_level,
+                emotional_state=constraints.emotional_state,
+                urgency=constraints.urgency,
+                memories=memory_strings,
+                player_input=player_input,
+                situation=situation,
+                constraints=constraint_strings if constraint_strings else None,
+            )
+        except Exception:
+            # Fallback on any error
+            return self._fallback_dialogue(profile, constraints, player_input)
+
+    def _fallback_dialogue(
+        self,
+        profile: NPCProfile,
+        constraints: DialogueConstraints,
+        player_input: str,
+    ) -> str:
+        """
+        Generate template-based dialogue when LLM is unavailable.
+
+        Args:
+            profile: NPC's personality profile
+            constraints: Dialogue constraints
+            player_input: What the player said
+
+        Returns:
+            Simple template-based response
+        """
+        # Detect greeting
+        greetings = ["hello", "hi", "greetings", "hey", "good morning", "good evening"]
+        if any(g in player_input.lower() for g in greetings):
+            if constraints.attitude_toward_player == "friendly":
+                return "Well met, friend!"
+            elif constraints.attitude_toward_player == "hostile":
+                return "*glares* What do you want?"
+            else:
+                return "Hello, traveler."
+
+        # Detect question
+        if "?" in player_input or player_input.lower().startswith(("who", "what", "where", "when", "why", "how")):
+            if constraints.trust_level == "suspicious":
+                return "I don't know anything about that. And even if I did, why would I tell you?"
+            elif constraints.trust_level == "trusting":
+                return "Hmm, let me think about that..."
+            else:
+                return "I'm not sure I can help you with that."
+
+        # Detect threat/intimidation
+        if any(t in player_input.lower() for t in ["threat", "kill", "hurt", "attack"]):
+            if profile.traits.agreeableness > 60:
+                return "Please, there's no need for violence!"
+            elif profile.traits.neuroticism > 60:
+                return "*backs away nervously* L-leave me alone!"
+            else:
+                return "*stands firm* You don't scare me."
+
+        # Default response based on attitude
+        if constraints.attitude_toward_player == "friendly":
+            return "Interesting. Tell me more."
+        elif constraints.attitude_toward_player == "hostile":
+            return "*grunts dismissively*"
+        else:
+            return "I see."
