@@ -20,16 +20,11 @@ from src.models.npc import (
     MemoryType,
     Motivation,
     NPCDecisionContext,
-    NPCMemory,
-    NPCProfile,
-    PersonalityTraits,
-    RelationshipSummary,
     create_memory,
     create_npc_profile,
     get_combat_state,
 )
 from src.services.npc import NPCService
-
 
 # =============================================================================
 # Action Option Tests
@@ -499,3 +494,226 @@ class TestMemoryRepository:
 
         self.repo.delete_memory(memory.id)
         assert len(self.repo.get_memories_for_npc(npc_id)) == 0
+
+
+# =============================================================================
+# Memory Retrieval Tests
+# =============================================================================
+
+
+class TestMemoryRetrieval:
+    """Tests for NPCService memory retrieval with relevance scoring."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.dolt = InMemoryDoltRepository()
+        self.neo4j = InMemoryNeo4jRepository()
+        self.service = NPCService(dolt=self.dolt, neo4j=self.neo4j)
+
+    def test_retrieve_memories_empty(self) -> None:
+        """Test retrieval when NPC has no memories."""
+        npc_id = uuid4()
+        memories = self.service.retrieve_memories(
+            npc_id=npc_id,
+            context_description="Walking through the forest",
+        )
+        assert memories == []
+
+    def test_retrieve_memories_basic(self) -> None:
+        """Test basic memory retrieval."""
+        npc_id = uuid4()
+        memory = create_memory(
+            npc_id=npc_id,
+            memory_type=MemoryType.ENCOUNTER,
+            description="Met a traveler in the forest",
+            importance=0.7,
+        )
+        self.neo4j.create_memory(memory)
+
+        memories = self.service.retrieve_memories(
+            npc_id=npc_id,
+            context_description="Walking through the forest",
+            limit=5,
+        )
+        assert len(memories) == 1
+        assert memories[0].id == memory.id
+
+    def test_retrieve_memories_relevance_scoring(self) -> None:
+        """Test that relevant memories score higher."""
+        npc_id = uuid4()
+
+        # Relevant memory (about forests)
+        forest_memory = create_memory(
+            npc_id=npc_id,
+            memory_type=MemoryType.ENCOUNTER,
+            description="Saw a deer in the dark forest near the mountain",
+            importance=0.5,
+        )
+        # Irrelevant memory (about city)
+        city_memory = create_memory(
+            npc_id=npc_id,
+            memory_type=MemoryType.ENCOUNTER,
+            description="Bought bread at the city market",
+            importance=0.5,
+        )
+        self.neo4j.create_memory(forest_memory)
+        self.neo4j.create_memory(city_memory)
+
+        memories = self.service.retrieve_memories(
+            npc_id=npc_id,
+            context_description="Exploring the forest near the mountain",
+            limit=2,
+        )
+
+        # Forest memory should be ranked first due to keyword overlap
+        assert len(memories) == 2
+        assert memories[0].id == forest_memory.id
+
+    def test_retrieve_memories_with_subject_filter(self) -> None:
+        """Test retrieval filtered by subject entity."""
+        npc_id = uuid4()
+        player_id = uuid4()
+        goblin_id = uuid4()
+
+        player_memory = create_memory(
+            npc_id=npc_id,
+            memory_type=MemoryType.DIALOGUE,
+            description="The hero asked about the treasure",
+            subject_id=player_id,
+        )
+        goblin_memory = create_memory(
+            npc_id=npc_id,
+            memory_type=MemoryType.ACTION,
+            description="The goblin stole my coins",
+            subject_id=goblin_id,
+        )
+        self.neo4j.create_memory(player_memory)
+        self.neo4j.create_memory(goblin_memory)
+
+        memories = self.service.retrieve_memories(
+            npc_id=npc_id,
+            context_description="Talking about treasure",
+            subject_id=player_id,
+            limit=5,
+        )
+
+        assert len(memories) == 1
+        assert memories[0].subject_id == player_id
+
+    def test_retrieve_memories_updates_recall_tracking(self) -> None:
+        """Test that retrieved memories are marked as recalled."""
+        npc_id = uuid4()
+        memory = create_memory(
+            npc_id=npc_id,
+            memory_type=MemoryType.OBSERVATION,
+            description="Saw strange lights in the sky",
+        )
+        self.neo4j.create_memory(memory)
+
+        # Retrieve the memory
+        memories = self.service.retrieve_memories(
+            npc_id=npc_id,
+            context_description="Strange lights appeared",
+            limit=5,
+        )
+
+        # Check that recall was updated
+        assert len(memories) == 1
+        assert memories[0].times_recalled == 1
+        assert memories[0].last_recalled is not None
+
+    def test_retrieve_memories_respects_limit(self) -> None:
+        """Test that limit is respected."""
+        npc_id = uuid4()
+
+        for i in range(10):
+            memory = create_memory(
+                npc_id=npc_id,
+                memory_type=MemoryType.OBSERVATION,
+                description=f"Event number {i}",
+            )
+            self.neo4j.create_memory(memory)
+
+        memories = self.service.retrieve_memories(
+            npc_id=npc_id,
+            context_description="Something happened",
+            limit=3,
+        )
+
+        assert len(memories) == 3
+
+
+# =============================================================================
+# Keyword Extraction Tests
+# =============================================================================
+
+
+class TestKeywordExtraction:
+    """Tests for keyword extraction and relevance helpers."""
+
+    def test_extract_keywords_basic(self) -> None:
+        """Test basic keyword extraction."""
+        from src.services.npc import _extract_keywords
+
+        keywords = _extract_keywords("The quick brown fox jumps over the lazy dog")
+        # Should exclude common stop words like "the"
+        assert "quick" in keywords
+        assert "brown" in keywords
+        assert "fox" in keywords
+        assert "jumps" in keywords
+        assert "lazy" in keywords
+        assert "dog" in keywords
+        assert "the" not in keywords
+
+    def test_extract_keywords_filters_short_words(self) -> None:
+        """Test that short words are filtered."""
+        from src.services.npc import _extract_keywords
+
+        keywords = _extract_keywords("I am a go to be")
+        # All are too short or stop words
+        assert len(keywords) == 0
+
+    def test_extract_keywords_lowercase(self) -> None:
+        """Test that keywords are lowercased."""
+        from src.services.npc import _extract_keywords
+
+        keywords = _extract_keywords("FOREST Mountain RIVER")
+        assert "forest" in keywords
+        assert "mountain" in keywords
+        assert "river" in keywords
+        assert "FOREST" not in keywords
+
+    def test_calculate_keyword_relevance_full_overlap(self) -> None:
+        """Test relevance with full keyword overlap."""
+        from src.services.npc import _calculate_keyword_relevance, _extract_keywords
+
+        context_keywords = _extract_keywords("forest mountain river")
+        relevance = _calculate_keyword_relevance(
+            "Saw a river near the mountain in the forest",
+            context_keywords,
+        )
+        # High overlap should give high relevance
+        assert relevance > 0.7
+
+    def test_calculate_keyword_relevance_no_overlap(self) -> None:
+        """Test relevance with no keyword overlap."""
+        from src.services.npc import _calculate_keyword_relevance, _extract_keywords
+
+        context_keywords = _extract_keywords("forest mountain river")
+        relevance = _calculate_keyword_relevance(
+            "Bought bread at the city market",
+            context_keywords,
+        )
+        # No overlap should give low relevance
+        assert relevance < 0.4
+
+    def test_calculate_keyword_relevance_empty_context(self) -> None:
+        """Test relevance with empty context."""
+        from src.services.npc import _calculate_keyword_relevance
+
+        relevance = _calculate_keyword_relevance(
+            "Some memory description",
+            set(),  # Empty context
+        )
+        # Should return neutral relevance
+        assert relevance == 0.5

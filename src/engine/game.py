@@ -30,6 +30,7 @@ from src.engine.models import (
 from src.engine.router import SkillRouter
 from src.models import Entity, Event, EventOutcome, EventType, RelationshipType
 from src.services.multiverse import MultiverseService
+from src.services.npc import NPCService
 
 if TYPE_CHECKING:
     from src.engine.agents import (
@@ -161,6 +162,7 @@ class GameEngine:
     intent_parser: HybridIntentParser = field(init=False)
     router: SkillRouter = field(init=False)
     narrator: NarrativeGenerator = field(init=False)
+    npc_service: NPCService = field(init=False)
 
     # Agent system (Phase 3)
     _orchestrator: AgentOrchestratorType | None = field(init=False, default=None)
@@ -176,6 +178,7 @@ class GameEngine:
             tone=self.config.tone,
             verbosity=self.config.verbosity,
         )
+        self.npc_service = NPCService(dolt=self.dolt, neo4j=self.neo4j)
 
         # Initialize agent system if enabled
         if self.use_agents:
@@ -678,7 +681,7 @@ class GameEngine:
         )
 
     async def _record_events(self, turn: Turn, session: Session) -> None:
-        """Record events from the turn."""
+        """Record events from the turn and form NPC memories."""
         if not turn.skill_results:
             return
 
@@ -707,6 +710,9 @@ class GameEngine:
 
             self.dolt.append_event(event)
             turn.events_created.append(event.id)
+
+            # Form NPC memories for entities present at the location
+            await self._form_npc_memories(event, session)
 
     def _intent_to_event_type(self, intent_type: IntentType) -> EventType:
         """Map intent type to event type."""
@@ -745,3 +751,159 @@ class GameEngine:
             if result.conditions:
                 changes.append(f"Applied: {', '.join(result.conditions)}")
         return changes
+
+    async def _form_npc_memories(self, event: Event, session: Session) -> None:
+        """
+        Form memories for NPCs present at the event location.
+
+        NPCs who witness events form memories based on their relevance
+        and emotional impact. These memories influence future behavior.
+        """
+        # Get entities at the location (NPCs who could witness the event)
+        located_in_rels = self.neo4j.get_relationships(
+            session.location_id,
+            session.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+
+        for rel in located_in_rels:
+            npc_id = rel.from_entity_id
+
+            # Skip the player character - they don't form NPC memories
+            if npc_id == session.character_id:
+                continue
+
+            # Skip the event actor (they already know what they did)
+            if npc_id == event.actor_id:
+                continue
+
+            # Form memory for this NPC witnessing the event
+            memory_result = self.npc_service.form_memory(npc_id, event)
+
+            if memory_result.formed and memory_result.memory:
+                # Persist the memory to Neo4j
+                self.neo4j.create_memory(memory_result.memory)
+
+    async def get_npc_reaction(
+        self,
+        npc_id: UUID,
+        session: Session,
+        available_actions: list[str] | None = None,
+    ) -> dict[str, str | None]:
+        """
+        Get an NPC's reaction to the current situation.
+
+        Uses the NPC AI decision system to determine what the NPC would do.
+
+        Args:
+            npc_id: The NPC to get reaction for
+            session: Current game session
+            available_actions: Optional filter for available action types
+
+        Returns:
+            Dict with 'action' type and 'description'
+        """
+        from src.models.npc import (
+            ActionType,
+            NPCDecisionContext,
+            create_npc_profile,
+        )
+        from src.models.npc import (
+            EntitySummary as NPCEntitySummary,
+        )
+        from src.models.npc import (
+            RelationshipSummary as NPCRelationshipSummary,
+        )
+
+        # Get NPC entity
+        npc_entity = self.dolt.get_entity(npc_id, session.universe_id)
+        if not npc_entity:
+            return {"action": None, "description": "NPC not found"}
+
+        # Build NPC profile (use stored profile or create default)
+        # Future: Store NPCProfile in entity.payload
+        profile = create_npc_profile(npc_id)
+
+        # Get entities present
+        entities_present = []
+        located_in_rels = self.neo4j.get_relationships(
+            session.location_id,
+            session.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+        for rel in located_in_rels[:self.config.max_nearby_entities]:
+            entity = self.dolt.get_entity(rel.from_entity_id, session.universe_id)
+            if entity and entity.id != npc_id:
+                entities_present.append(
+                    NPCEntitySummary(
+                        id=entity.id,
+                        name=entity.name,
+                        entity_type=entity.type.value,
+                        is_player=(entity.id == session.character_id),
+                        hp_percentage=(
+                            entity.stats.hp_current / entity.stats.hp_max
+                            if entity.stats and entity.stats.hp_max > 0
+                            else 1.0
+                        ),
+                    )
+                )
+
+        # Get NPC relationships
+        relationships = []
+        for rel_type in ["KNOWS", "FEARS", "ALLIED_WITH", "HOSTILE_TO", "RESPECTS", "DISTRUSTS"]:
+            rels = self.neo4j.get_relationships(
+                npc_id,
+                session.universe_id,
+                relationship_type=rel_type,
+            )
+            for rel in rels:
+                # Get target entity name
+                target_entity = self.dolt.get_entity(rel.to_entity_id, session.universe_id)
+                target_name = target_entity.name if target_entity else "Unknown"
+                relationships.append(
+                    NPCRelationshipSummary(
+                        target_id=rel.to_entity_id,
+                        target_name=target_name,
+                        relationship_type=rel_type,
+                        strength=rel.strength,
+                        trust=rel.trust or 0.0,
+                    )
+                )
+
+        # Retrieve relevant memories
+        location_entity = self.dolt.get_entity(session.location_id, session.universe_id)
+        context_desc = f"At {location_entity.name if location_entity else 'unknown location'}"
+        memories = self.npc_service.retrieve_memories(npc_id, context_desc, limit=5)
+
+        # Build decision context
+        context = NPCDecisionContext(
+            npc_id=npc_id,
+            npc_profile=profile,
+            hp_percentage=(
+                npc_entity.stats.hp_current / npc_entity.stats.hp_max
+                if npc_entity.stats and npc_entity.stats.hp_max > 0
+                else 1.0
+            ),
+            location_name=location_entity.name if location_entity else "Unknown",
+            entities_present=entities_present,
+            relationships=relationships,
+            relevant_memories=memories,
+        )
+
+        # Convert action filter if provided
+        action_filter = None
+        if available_actions:
+            action_filter = [
+                ActionType(a) for a in available_actions
+                if a in [at.value for at in ActionType]
+            ]
+
+        # Get decision
+        result = self.npc_service.decide_action(context, action_filter)
+
+        return {
+            "action": result.action.action_type.value,
+            "description": result.action.description,
+            "target_id": str(result.action.target_id) if result.action.target_id else None,
+            "reasoning": result.reasoning,
+        }

@@ -38,6 +38,99 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# Text Relevance Helpers
+# =============================================================================
+
+# Common stop words to exclude from keyword extraction
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "need", "dare",
+    "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+    "from", "as", "into", "through", "during", "before", "after", "above",
+    "below", "between", "under", "again", "further", "then", "once", "here",
+    "there", "when", "where", "why", "how", "all", "each", "few", "more",
+    "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+    "same", "so", "than", "too", "very", "just", "and", "but", "if", "or",
+    "because", "until", "while", "this", "that", "these", "those", "i",
+    "you", "he", "she", "it", "we", "they", "what", "which", "who", "whom",
+})
+
+
+def _extract_keywords(text: str) -> set[str]:
+    """
+    Extract meaningful keywords from text for relevance matching.
+
+    Args:
+        text: Text to extract keywords from
+
+    Returns:
+        Set of lowercase keywords (excluding stop words)
+    """
+    # Simple tokenization: split on non-alphanumeric, lowercase
+    words = set()
+    current_word = []
+
+    for char in text.lower():
+        if char.isalnum():
+            current_word.append(char)
+        elif current_word:
+            word = "".join(current_word)
+            if len(word) > 2 and word not in _STOP_WORDS:
+                words.add(word)
+            current_word = []
+
+    # Don't forget the last word
+    if current_word:
+        word = "".join(current_word)
+        if len(word) > 2 and word not in _STOP_WORDS:
+            words.add(word)
+
+    return words
+
+
+def _calculate_keyword_relevance(
+    memory_description: str,
+    context_keywords: set[str],
+) -> float:
+    """
+    Calculate relevance score based on keyword overlap.
+
+    This is a simple heuristic for relevance scoring.
+    Future: Replace with vector similarity using embeddings.
+
+    Args:
+        memory_description: The memory's description text
+        context_keywords: Keywords extracted from current context
+
+    Returns:
+        Relevance score from 0.0 to 1.0
+    """
+    if not context_keywords:
+        return 0.5  # Neutral relevance if no context
+
+    memory_keywords = _extract_keywords(memory_description)
+
+    if not memory_keywords:
+        return 0.3  # Low relevance for empty memories
+
+    # Jaccard-inspired overlap scoring
+    overlap = len(memory_keywords & context_keywords)
+    union = len(memory_keywords | context_keywords)
+
+    if union == 0:
+        return 0.3
+
+    # Scale to 0.0-1.0 range with a boost for any overlap
+    base_score = overlap / union
+    # Boost: any overlap is significant
+    if overlap > 0:
+        base_score = 0.3 + (0.7 * base_score)
+
+    return min(1.0, base_score)
+
+
+# =============================================================================
 # Result Models
 # =============================================================================
 
@@ -690,25 +783,64 @@ class NPCService:
         npc_id: UUID,
         context_description: str,
         limit: int = 5,
+        subject_id: UUID | None = None,
     ) -> list[NPCMemory]:
         """
         Retrieve relevant memories for the current context.
 
-        Note: This is a placeholder. Full implementation requires
-        Neo4j vector search or embedding-based retrieval.
+        Scores memories by:
+        - Relevance: Keyword overlap with context (future: vector similarity)
+        - Recency: More recent memories score higher
+        - Importance: Life-changing events score higher
+        - Emotional intensity: Strong emotions are more memorable
 
         Args:
             npc_id: The NPC to retrieve memories for
             context_description: Description of current context
             limit: Maximum memories to return
+            subject_id: Optional entity to filter memories about
 
         Returns:
             Relevant memories sorted by retrieval score
         """
-        # TODO: Implement with Neo4j memory queries
-        # For now, return empty list
-        # Real implementation would:
-        # 1. Get all memories for NPC from Neo4j
-        # 2. Score by relevance (vector similarity), recency, importance
-        # 3. Return top N
-        return []
+        # Get memories from Neo4j
+        if subject_id:
+            memories = self.neo4j.get_memories_about_entity(
+                npc_id=npc_id,
+                subject_id=subject_id,
+                limit=limit * 3,  # Fetch more to allow scoring
+            )
+        else:
+            memories = self.neo4j.get_memories_for_npc(
+                npc_id=npc_id,
+                limit=limit * 3,
+            )
+
+        if not memories:
+            return []
+
+        # Score each memory
+        scored_memories: list[tuple[NPCMemory, float]] = []
+        context_keywords = _extract_keywords(context_description)
+
+        for memory in memories:
+            # Calculate keyword-based relevance (future: vector similarity)
+            relevance = _calculate_keyword_relevance(
+                memory.description, context_keywords
+            )
+
+            # Use the model's retrieval score calculation
+            score = memory.calculate_retrieval_score(relevance=relevance)
+            scored_memories.append((memory, score))
+
+        # Sort by score descending
+        scored_memories.sort(key=lambda x: x[1], reverse=True)
+
+        # Return top N and mark them as recalled
+        result = []
+        for memory, _score in scored_memories[:limit]:
+            memory.recall()
+            self.neo4j.update_memory_recall(memory.id)
+            result.append(memory)
+
+        return result
