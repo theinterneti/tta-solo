@@ -375,7 +375,7 @@ class TestNPCPersonalityBehavior:
             npc_id,
             openness=90,
             extraversion=70,
-            motivations=[Motivation.KNOWLEDGE, Motivation.ADVENTURE],
+            motivations=[Motivation.KNOWLEDGE, Motivation.LEGACY],
         )
 
         response = await npc_service.generate_dialogue(
