@@ -1,0 +1,51 @@
+name: "📋 Spec Request"
+description: "Request a new specification before implementation"
+labels: ["spec-needed"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Spec-Driven Development
+        In this project, **specs MUST exist before code**. Use this template to request a new spec.
+        
+  - type: input
+    id: spec_name
+    attributes:
+      label: "Proposed Spec Name"
+      description: "What should the spec file be called?"
+      placeholder: "specs/combat-resolution.md"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: overview
+    attributes:
+      label: "Overview"
+      description: "What should this spec define?"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: inputs
+    attributes:
+      label: "Expected Inputs"
+      description: "What data will this feature receive?"
+      placeholder: "- attacker: Entity\n- target: Entity\n- weapon: Weapon"
+    validations:
+      required: false
+      
+  - type: textarea
+    id: outputs
+    attributes:
+      label: "Expected Outputs"
+      description: "What should this feature return?"
+    validations:
+      required: false
+      
+  - type: textarea
+    id: rules
+    attributes:
+      label: "Relevant Rules/References"
+      description: "SRD references, existing specs, or other sources"
+    validations:
+      required: false

@@ -1,0 +1,39 @@
+name: "🐛 Bug Report"
+description: "Report something that isn't working correctly"
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "Bug Description"
+      description: "What went wrong?"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected Behavior"
+      description: "What should have happened?"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "Steps to Reproduce"
+      description: "How can we recreate this?"
+      placeholder: |
+        1. Run `uv run pytest...`
+        2. See error...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Error Logs"
+      description: "Paste any relevant error messages"
+      render: shell
+    validations:
+      required: false
