@@ -150,6 +150,34 @@ class Neo4jRepository:
         results = self._run_query(query, params)
         return [self._record_to_relationship(r) for r in results]
 
+    def get_relationship_between(
+        self,
+        from_entity_id: UUID,
+        to_entity_id: UUID,
+        universe_id: UUID,
+        relationship_type: str | None = None,
+    ) -> Relationship | None:
+        """Get a specific relationship between two entities."""
+        type_filter = "AND r.type = $rel_type" if relationship_type else ""
+        query = f"""
+        MATCH (from:Entity {{id: $from_id}})-[r:RELATES]->(to:Entity {{id: $to_id}})
+        WHERE r.universe_id = $universe_id {type_filter}
+        RETURN r, from.id as from_id, to.id as to_id
+        LIMIT 1
+        """
+        params: dict[str, Any] = {
+            "from_id": str(from_entity_id),
+            "to_id": str(to_entity_id),
+            "universe_id": str(universe_id),
+        }
+        if relationship_type:
+            params["rel_type"] = relationship_type
+
+        results = self._run_query(query, params)
+        if results:
+            return self._record_to_relationship(results[0])
+        return None
+
     def update_relationship(self, relationship: Relationship) -> None:
         """Update an existing relationship."""
         query = """

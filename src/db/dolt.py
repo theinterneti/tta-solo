@@ -453,6 +453,71 @@ class DoltRepository:
             else None,
         )
 
+    # =========================================================================
+    # NPC Profile Operations
+    # =========================================================================
+
+    def get_npc_profile(self, entity_id: UUID) -> dict | None:
+        """Get an NPC profile by entity ID."""
+        result = self._execute(
+            "SELECT * FROM npc_profiles WHERE entity_id = %s",
+            (str(entity_id),),
+        )
+        if not result:
+            return None
+        row = result[0]
+        return {
+            "entity_id": UUID(row["entity_id"]),
+            "traits": json.loads(row["traits"]) if row["traits"] else {},
+            "motivations": json.loads(row["motivations"]) if row["motivations"] else [],
+            "speech_style": row["speech_style"],
+            "quirks": json.loads(row["quirks"]) if row["quirks"] else [],
+            "lawful_chaotic": row["lawful_chaotic"] or 0,
+            "good_evil": row["good_evil"] or 0,
+        }
+
+    def save_npc_profile(
+        self,
+        entity_id: UUID,
+        traits: dict,
+        motivations: list[str],
+        speech_style: str | None = None,
+        quirks: list[str] | None = None,
+        lawful_chaotic: int = 0,
+        good_evil: int = 0,
+    ) -> None:
+        """Save or update an NPC profile."""
+        query = """
+            INSERT INTO npc_profiles (
+                entity_id, traits, motivations, speech_style, quirks,
+                lawful_chaotic, good_evil, created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+            )
+            ON DUPLICATE KEY UPDATE
+                traits = VALUES(traits),
+                motivations = VALUES(motivations),
+                speech_style = VALUES(speech_style),
+                quirks = VALUES(quirks),
+                lawful_chaotic = VALUES(lawful_chaotic),
+                good_evil = VALUES(good_evil),
+                updated_at = NOW()
+        """
+        self._execute(
+            query,
+            (
+                str(entity_id),
+                json.dumps(traits),
+                json.dumps(motivations),
+                speech_style,
+                json.dumps(quirks or []),
+                lawful_chaotic,
+                good_evil,
+            ),
+            fetch=False,
+        )
+        self._execute_proc("dolt_commit", ("-am", f"Save NPC profile for {entity_id}"))
+
 
 # SQL schema for initializing the database
 DOLT_SCHEMA = """

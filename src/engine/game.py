@@ -785,6 +785,22 @@ class GameEngine:
                 # Persist the memory to Neo4j
                 self.neo4j.create_memory(memory_result.memory)
 
+            # Update relationships based on the event
+            # NPC's relationship with the actor
+            if event.actor_id and event.actor_id != npc_id:
+                self.npc_service.update_relationship(
+                    npc_id=npc_id,
+                    target_id=event.actor_id,
+                    event=event,
+                )
+            # NPC's relationship with the target (if different from actor and self)
+            if event.target_id and event.target_id != npc_id and event.target_id != event.actor_id:
+                self.npc_service.update_relationship(
+                    npc_id=npc_id,
+                    target_id=event.target_id,
+                    event=event,
+                )
+
     async def process_npc_combat_turn(
         self,
         npc_id: UUID,
@@ -807,7 +823,6 @@ class GameEngine:
         """
         from src.models.npc import (
             CombatState,
-            create_npc_profile,
         )
         from src.models.npc import (
             EntitySummary as NPCEntitySummary,
@@ -828,9 +843,8 @@ class GameEngine:
         if not npc_entity:
             return {"success": False, "error": "NPC not found"}
 
-        # Build NPC profile
-        # FIXME: Should load actual profile from entity.payload or npc_profiles table
-        profile = create_npc_profile(npc_id)
+        # Build NPC profile - load from database or create default
+        profile = self.npc_service.get_or_create_profile(npc_id)
 
         # Calculate HP percentage
         hp_percentage = 1.0
@@ -999,14 +1013,26 @@ class GameEngine:
                 )
                 self.dolt.append_event(combat_event)
 
-                # Form memories for witnesses
+                # Form memories and update relationships for witnesses
                 for entity_summary in entities_present:
                     if entity_summary.id != npc_id:
+                        # Form memory
                         memory_result = self.npc_service.form_memory(
                             entity_summary.id, combat_event
                         )
                         if memory_result.formed and memory_result.memory:
                             self.neo4j.create_memory(memory_result.memory)
+
+                        # Update relationships
+                        self.npc_service.update_relationship(
+                            npc_id=entity_summary.id,
+                            target_id=npc_id,
+                            event=combat_event,
+                        )
+
+                # NPC's own relationship with the target also updates
+                # The attacker's trust in their target typically doesn't change
+                # from attacking them, but witnessing the combat does affect others
 
         elif combat_turn.combat_state in [CombatState.FLEEING, CombatState.SURRENDERING]:
             # Record flee/surrender event
@@ -1050,7 +1076,6 @@ class GameEngine:
         from src.models.npc import (
             ActionType,
             NPCDecisionContext,
-            create_npc_profile,
         )
         from src.models.npc import (
             EntitySummary as NPCEntitySummary,
@@ -1064,10 +1089,8 @@ class GameEngine:
         if not npc_entity:
             return {"action": None, "description": "NPC not found"}
 
-        # Build NPC profile (use stored profile or create default)
-        # FIXME: Currently creates default profile with all traits at 50.
-        # Should load actual profile from entity.payload or npc_profiles table.
-        profile = create_npc_profile(npc_id)
+        # Build NPC profile - load from database or create default
+        profile = self.npc_service.get_or_create_profile(npc_id)
 
         # Get entities present
         entities_present = []

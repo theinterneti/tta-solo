@@ -53,3 +53,6 @@ exclude = ["tests", "data"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests that require external services (deselect with '-m \"not integration\"')",
+]

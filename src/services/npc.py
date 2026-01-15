@@ -30,6 +30,7 @@ from src.models.npc import (
     NPCProfile,
     RelationshipSummary,
     create_memory,
+    create_npc_profile,
     get_combat_state,
 )
 from src.models.relationships import RelationshipType
@@ -551,6 +552,104 @@ class NPCService:
     neo4j: Neo4jRepository
     llm: LLMService | None = field(default=None)
 
+    def get_profile(self, entity_id: UUID) -> NPCProfile | None:
+        """
+        Load an NPC profile from the database.
+
+        Args:
+            entity_id: The entity to get the profile for
+
+        Returns:
+            NPCProfile if found, None otherwise
+        """
+        from src.models.npc import PersonalityTraits
+
+        profile_data = self.dolt.get_npc_profile(entity_id)
+        if not profile_data:
+            return None
+
+        traits_data = profile_data.get("traits", {})
+        traits = PersonalityTraits(
+            openness=traits_data.get("openness", 50),
+            conscientiousness=traits_data.get("conscientiousness", 50),
+            extraversion=traits_data.get("extraversion", 50),
+            agreeableness=traits_data.get("agreeableness", 50),
+            neuroticism=traits_data.get("neuroticism", 50),
+        )
+
+        motivations_raw = profile_data.get("motivations", ["survival"])
+        motivations = [Motivation(m) for m in motivations_raw]
+
+        return NPCProfile(
+            entity_id=entity_id,
+            traits=traits,
+            motivations=motivations,
+            quirks=profile_data.get("quirks", []),
+            speech_style=profile_data.get("speech_style", "neutral"),
+            lawful_chaotic=profile_data.get("lawful_chaotic", 0),
+            good_evil=profile_data.get("good_evil", 0),
+        )
+
+    def save_profile(self, profile: NPCProfile) -> None:
+        """
+        Save an NPC profile to the database.
+
+        Args:
+            profile: The profile to save
+        """
+        self.dolt.save_npc_profile(
+            entity_id=profile.entity_id,
+            traits={
+                "openness": profile.traits.openness,
+                "conscientiousness": profile.traits.conscientiousness,
+                "extraversion": profile.traits.extraversion,
+                "agreeableness": profile.traits.agreeableness,
+                "neuroticism": profile.traits.neuroticism,
+            },
+            motivations=[m.value for m in profile.motivations],
+            speech_style=profile.speech_style,
+            quirks=profile.quirks,
+            lawful_chaotic=profile.lawful_chaotic,
+            good_evil=profile.good_evil,
+        )
+
+    def get_or_create_profile(
+        self,
+        entity_id: UUID,
+        default_traits: dict[str, int] | None = None,
+    ) -> NPCProfile:
+        """
+        Get an existing profile or create a default one.
+
+        Note: Default profiles created by this method are NOT automatically
+        persisted to the database. Call save_profile() explicitly if you
+        want to persist a newly created profile.
+
+        Args:
+            entity_id: The entity to get/create profile for
+            default_traits: Optional default trait values (openness, conscientiousness, etc.)
+
+        Returns:
+            The loaded or newly created profile
+        """
+        profile = self.get_profile(entity_id)
+        if profile:
+            return profile
+
+        # Create default profile
+        traits = default_traits or {}
+        profile = create_npc_profile(
+            entity_id,
+            openness=traits.get("openness", 50),
+            conscientiousness=traits.get("conscientiousness", 50),
+            extraversion=traits.get("extraversion", 50),
+            agreeableness=traits.get("agreeableness", 50),
+            neuroticism=traits.get("neuroticism", 50),
+        )
+
+        # Don't persist default profiles - let them be created explicitly
+        return profile
+
     def decide_action(
         self,
         context: NPCDecisionContext,
@@ -805,14 +904,19 @@ class NPCService:
         npc_id: UUID,
         target_id: UUID,
         event: Event,
+        persist: bool = True,
     ) -> RelationshipDelta:
         """
         Update NPC's relationship based on an event.
+
+        Calculates relationship changes and optionally persists them to Neo4j.
+        If no relationship exists, creates a KNOWS relationship.
 
         Args:
             npc_id: The NPC whose relationship is updated
             target_id: The entity the relationship is with
             event: The event affecting the relationship
+            persist: Whether to persist changes to Neo4j
 
         Returns:
             The change in relationship metrics
@@ -840,11 +944,74 @@ class NPCService:
         if event.event_type == EventType.DIALOGUE:
             strength_change = 0.05
 
-        return RelationshipDelta(
+        # Social skill checks affect trust
+        if event.event_type == EventType.PERSUASION:
+            if event.outcome in [EventOutcome.SUCCESS, EventOutcome.CRITICAL_SUCCESS]:
+                trust_change += 0.1
+            else:
+                trust_change -= 0.05
+        elif event.event_type == EventType.INTIMIDATION:
+            if event.outcome in [EventOutcome.SUCCESS, EventOutcome.CRITICAL_SUCCESS]:
+                trust_change -= 0.15  # Intimidation hurts trust even when successful
+                strength_change += 0.1
+        elif event.event_type == EventType.DECEPTION:
+            # If deception is discovered later, this would change
+            pass
+
+        delta = RelationshipDelta(
             target_id=target_id,
             trust_change=trust_change,
             strength_change=strength_change,
         )
+
+        # Persist changes if requested
+        if persist and (trust_change != 0.0 or strength_change != 0.0):
+            self._apply_relationship_delta(npc_id, target_id, event.universe_id, delta)
+
+        return delta
+
+    def _apply_relationship_delta(
+        self,
+        npc_id: UUID,
+        target_id: UUID,
+        universe_id: UUID,
+        delta: RelationshipDelta,
+    ) -> None:
+        """
+        Apply a relationship delta to the database.
+
+        Creates a KNOWS relationship if none exists.
+        """
+        from src.models.relationships import Relationship
+
+        # Try to find existing relationship
+        existing = self.neo4j.get_relationship_between(
+            from_entity_id=npc_id,
+            to_entity_id=target_id,
+            universe_id=universe_id,
+        )
+
+        if existing:
+            # Update existing relationship
+            new_trust = (existing.trust or 0.0) + delta.trust_change
+            new_strength = existing.strength + delta.strength_change
+
+            # Clamp values
+            existing.trust = max(-1.0, min(1.0, new_trust))
+            existing.strength = max(0.0, min(1.0, new_strength))
+
+            self.neo4j.update_relationship(existing)
+        else:
+            # Create new KNOWS relationship
+            new_rel = Relationship(
+                universe_id=universe_id,
+                from_entity_id=npc_id,
+                to_entity_id=target_id,
+                relationship_type=RelationshipType.KNOWS,
+                strength=max(0.0, min(1.0, 0.5 + delta.strength_change)),
+                trust=max(-1.0, min(1.0, delta.trust_change)),
+            )
+            self.neo4j.create_relationship(new_rel)
 
     def get_combat_action(
         self,

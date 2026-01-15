@@ -104,6 +104,24 @@ class DoltRepository(Protocol):
         """Get events that occurred at a specific location."""
         ...
 
+    # NPC Profile operations
+    def get_npc_profile(self, entity_id: UUID) -> dict | None:
+        """Get an NPC profile by entity ID."""
+        ...
+
+    def save_npc_profile(
+        self,
+        entity_id: UUID,
+        traits: dict,
+        motivations: list[str],
+        speech_style: str | None = None,
+        quirks: list[str] | None = None,
+        lawful_chaotic: int = 0,
+        good_evil: int = 0,
+    ) -> None:
+        """Save or update an NPC profile."""
+        ...
+
 
 class Neo4jRepository(Protocol):
     """
@@ -125,6 +143,16 @@ class Neo4jRepository(Protocol):
         relationship_type: str | None = None,
     ) -> list[Relationship]:
         """Get all relationships for an entity in a universe."""
+        ...
+
+    def get_relationship_between(
+        self,
+        from_entity_id: UUID,
+        to_entity_id: UUID,
+        universe_id: UUID,
+        relationship_type: str | None = None,
+    ) -> Relationship | None:
+        """Get a specific relationship between two entities."""
         ...
 
     def update_relationship(self, relationship: Relationship) -> None:
