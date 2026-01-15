@@ -725,3 +725,415 @@ class TestKeywordExtraction:
         )
         # Should return neutral relevance
         assert relevance == 0.5
+
+
+# =============================================================================
+# Combat AI Integration Tests
+# =============================================================================
+
+
+class TestBuildCombatEvaluation:
+    """Tests for NPCService.build_combat_evaluation()."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.dolt = InMemoryDoltRepository()
+        self.neo4j = InMemoryNeo4jRepository()
+        self.service = NPCService(dolt=self.dolt, neo4j=self.neo4j)
+
+    def test_build_combat_evaluation_empty_battlefield(self) -> None:
+        """Test evaluation with no other entities."""
+
+        npc_id = uuid4()
+        evaluation = self.service.build_combat_evaluation(
+            npc_id=npc_id,
+            npc_hp_percentage=1.0,
+            entities_present=[],
+            relationships=[],
+            escape_routes=2,
+        )
+
+        assert evaluation.hp_percentage == 1.0
+        assert evaluation.enemies_count == 0
+        assert evaluation.allies_count == 0
+        assert evaluation.escape_routes == 2
+
+    def test_build_combat_evaluation_identifies_enemies_by_relationship(self) -> None:
+        """Test that hostile relationships are identified as enemies."""
+        from src.models.npc import RelationshipSummary
+
+        npc_id = uuid4()
+        enemy_id = uuid4()
+
+        entities = [
+            EntitySummary(
+                id=enemy_id,
+                name="Goblin",
+                entity_type="character",
+                apparent_threat=0.3,  # Not threatening alone
+            )
+        ]
+        relationships = [
+            RelationshipSummary(
+                target_id=enemy_id,
+                target_name="Goblin",
+                relationship_type="HOSTILE_TO",
+                strength=0.8,
+                trust=-0.5,
+            )
+        ]
+
+        evaluation = self.service.build_combat_evaluation(
+            npc_id=npc_id,
+            npc_hp_percentage=0.8,
+            entities_present=entities,
+            relationships=relationships,
+        )
+
+        assert evaluation.enemies_count == 1
+        assert evaluation.allies_count == 0
+
+    def test_build_combat_evaluation_identifies_allies_by_relationship(self) -> None:
+        """Test that allied relationships are identified as allies."""
+        from src.models.npc import RelationshipSummary
+
+        npc_id = uuid4()
+        ally_id = uuid4()
+
+        entities = [
+            EntitySummary(
+                id=ally_id,
+                name="Knight",
+                entity_type="character",
+                hp_percentage=0.6,
+                apparent_threat=0.3,
+            )
+        ]
+        relationships = [
+            RelationshipSummary(
+                target_id=ally_id,
+                target_name="Knight",
+                relationship_type="ALLIED_WITH",
+                strength=0.9,
+                trust=0.7,
+            )
+        ]
+
+        evaluation = self.service.build_combat_evaluation(
+            npc_id=npc_id,
+            npc_hp_percentage=1.0,
+            entities_present=entities,
+            relationships=relationships,
+        )
+
+        assert evaluation.enemies_count == 0
+        assert evaluation.allies_count == 1
+        assert evaluation.ally_health_average == 0.6
+
+    def test_build_combat_evaluation_threat_by_appearance(self) -> None:
+        """Test that unknown entities with high threat are treated as enemies."""
+        npc_id = uuid4()
+        unknown_id = uuid4()
+
+        entities = [
+            EntitySummary(
+                id=unknown_id,
+                name="Stranger",
+                entity_type="character",
+                apparent_threat=0.8,  # Looks threatening
+            )
+        ]
+
+        evaluation = self.service.build_combat_evaluation(
+            npc_id=npc_id,
+            npc_hp_percentage=1.0,
+            entities_present=entities,
+            relationships=[],  # No relationships
+        )
+
+        assert evaluation.enemies_count == 1
+        assert evaluation.strongest_enemy_threat == 0.8
+
+    def test_build_combat_evaluation_threat_metrics(self) -> None:
+        """Test threat calculation with multiple enemies."""
+        npc_id = uuid4()
+
+        entities = [
+            EntitySummary(
+                id=uuid4(),
+                name="Goblin 1",
+                entity_type="character",
+                apparent_threat=0.6,
+            ),
+            EntitySummary(
+                id=uuid4(),
+                name="Goblin 2",
+                entity_type="character",
+                apparent_threat=0.8,
+            ),
+        ]
+
+        evaluation = self.service.build_combat_evaluation(
+            npc_id=npc_id,
+            npc_hp_percentage=0.5,
+            entities_present=entities,
+            relationships=[],
+        )
+
+        assert evaluation.enemies_count == 2
+        assert evaluation.strongest_enemy_threat == 0.8
+        # Total threat is capped at 1.0: 0.6 + 0.8 = 1.4 -> 1.0
+        assert evaluation.total_enemy_threat == 1.0
+
+
+class TestGetNpcCombatTurn:
+    """Tests for NPCService.get_npc_combat_turn()."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.dolt = InMemoryDoltRepository()
+        self.neo4j = InMemoryNeo4jRepository()
+        self.service = NPCService(dolt=self.dolt, neo4j=self.neo4j)
+
+    def test_combat_turn_aggressive_attacks_strongest(self) -> None:
+        """Test that aggressive NPCs attack the strongest threat."""
+
+        npc_id = uuid4()
+        strong_enemy_id = uuid4()
+        weak_enemy_id = uuid4()
+
+        # Low agreeableness = aggressive
+        profile = create_npc_profile(npc_id, agreeableness=20)
+
+        entities = [
+            EntitySummary(
+                id=strong_enemy_id,
+                name="Ogre",
+                entity_type="character",
+                apparent_threat=0.9,
+            ),
+            EntitySummary(
+                id=weak_enemy_id,
+                name="Goblin",
+                entity_type="character",
+                apparent_threat=0.4,
+            ),
+        ]
+
+        evaluation = CombatEvaluation(
+            hp_percentage=1.0,
+            enemies_count=2,
+            strongest_enemy_threat=0.9,
+            total_enemy_threat=1.0,
+        )
+
+        result = self.service.get_npc_combat_turn(
+            npc_id=npc_id,
+            npc_profile=profile,
+            evaluation=evaluation,
+            entities_present=entities,
+            relationships=[],
+        )
+
+        assert result.combat_state == CombatState.AGGRESSIVE
+        assert result.action == ActionType.ATTACK
+        assert result.target_id == strong_enemy_id
+
+    def test_combat_turn_supportive_heals_injured(self) -> None:
+        """Test that supportive NPCs prioritize healing injured allies."""
+        from src.models.npc import RelationshipSummary
+
+        npc_id = uuid4()
+        injured_ally_id = uuid4()
+
+        # High agreeableness = supportive
+        profile = create_npc_profile(npc_id, agreeableness=80)
+
+        entities = [
+            EntitySummary(
+                id=injured_ally_id,
+                name="Wounded Knight",
+                entity_type="character",
+                hp_percentage=0.3,
+                apparent_threat=0.2,
+            )
+        ]
+
+        relationships = [
+            RelationshipSummary(
+                target_id=injured_ally_id,
+                target_name="Wounded Knight",
+                relationship_type="ALLIED_WITH",
+                strength=0.8,
+                trust=0.6,
+            )
+        ]
+
+        evaluation = CombatEvaluation(
+            hp_percentage=0.9,
+            allies_count=1,
+            ally_health_average=0.3,
+            enemies_count=0,
+        )
+
+        result = self.service.get_npc_combat_turn(
+            npc_id=npc_id,
+            npc_profile=profile,
+            evaluation=evaluation,
+            entities_present=entities,
+            relationships=relationships,
+        )
+
+        assert result.combat_state == CombatState.SUPPORTIVE
+        assert result.action == ActionType.HEAL
+        assert result.target_id == injured_ally_id
+        assert result.should_use_ability is True
+
+    def test_combat_turn_fleeing_when_low_hp(self) -> None:
+        """Test that NPCs flee when HP is critically low."""
+        npc_id = uuid4()
+        enemy_id = uuid4()
+
+        # High neuroticism = flees earlier
+        profile = create_npc_profile(npc_id, neuroticism=80)
+
+        entities = [
+            EntitySummary(
+                id=enemy_id,
+                name="Dragon",
+                entity_type="character",
+                apparent_threat=1.0,
+            )
+        ]
+
+        evaluation = CombatEvaluation(
+            hp_percentage=0.15,  # Very low HP
+            enemies_count=1,
+            strongest_enemy_threat=1.0,
+            total_enemy_threat=1.0,
+            escape_routes=2,
+        )
+
+        result = self.service.get_npc_combat_turn(
+            npc_id=npc_id,
+            npc_profile=profile,
+            evaluation=evaluation,
+            entities_present=entities,
+            relationships=[],
+        )
+
+        assert result.combat_state == CombatState.FLEEING
+        assert result.action == ActionType.FLEE
+
+    def test_combat_turn_surrendering_when_trapped(self) -> None:
+        """Test that NPCs surrender when low HP and no escape."""
+        npc_id = uuid4()
+        enemy_id = uuid4()
+
+        profile = create_npc_profile(npc_id)
+
+        entities = [
+            EntitySummary(
+                id=enemy_id,
+                name="Knight",
+                entity_type="character",
+                apparent_threat=0.8,
+            )
+        ]
+
+        evaluation = CombatEvaluation(
+            hp_percentage=0.05,  # Nearly dead
+            enemies_count=1,
+            strongest_enemy_threat=0.8,
+            total_enemy_threat=0.8,
+            escape_routes=0,  # No escape
+            allies_count=0,
+        )
+
+        result = self.service.get_npc_combat_turn(
+            npc_id=npc_id,
+            npc_profile=profile,
+            evaluation=evaluation,
+            entities_present=entities,
+            relationships=[],
+        )
+
+        assert result.combat_state == CombatState.SURRENDERING
+        assert result.action == ActionType.SURRENDER
+
+    def test_combat_turn_defensive_when_hurt(self) -> None:
+        """Test that defensive NPCs counterattack cautiously."""
+        npc_id = uuid4()
+        enemy_id = uuid4()
+
+        # Moderate agreeableness = defensive/tactical
+        profile = create_npc_profile(npc_id, agreeableness=50)
+
+        entities = [
+            EntitySummary(
+                id=enemy_id,
+                name="Bandit",
+                entity_type="character",
+                hp_percentage=0.7,
+                apparent_threat=0.6,
+            )
+        ]
+
+        # Moderate HP - should be defensive but can still fight
+        evaluation = CombatEvaluation(
+            hp_percentage=0.5,
+            enemies_count=1,
+            strongest_enemy_threat=0.6,
+            total_enemy_threat=0.6,
+            escape_routes=1,
+        )
+
+        result = self.service.get_npc_combat_turn(
+            npc_id=npc_id,
+            npc_profile=profile,
+            evaluation=evaluation,
+            entities_present=entities,
+            relationships=[],
+        )
+
+        # Should be tactical or defensive
+        assert result.combat_state in [CombatState.TACTICAL, CombatState.DEFENSIVE]
+
+
+class TestCombatTurnResult:
+    """Tests for CombatTurnResult model."""
+
+    def test_combat_turn_result_model(self) -> None:
+        """Test CombatTurnResult model creation."""
+        from src.services.npc import CombatTurnResult
+
+        target_id = uuid4()
+        result = CombatTurnResult(
+            combat_state=CombatState.AGGRESSIVE,
+            action=ActionType.ATTACK,
+            target_id=target_id,
+            description="Attacks the goblin aggressively",
+            should_use_ability=False,
+        )
+
+        assert result.combat_state == CombatState.AGGRESSIVE
+        assert result.action == ActionType.ATTACK
+        assert result.target_id == target_id
+        assert result.should_use_ability is False
+        assert result.ability_name is None
+
+    def test_combat_turn_result_with_ability(self) -> None:
+        """Test CombatTurnResult with ability usage."""
+        from src.services.npc import CombatTurnResult
+
+        result = CombatTurnResult(
+            combat_state=CombatState.SUPPORTIVE,
+            action=ActionType.HEAL,
+            target_id=uuid4(),
+            description="Heals the wounded ally",
+            should_use_ability=True,
+            ability_name="healing",
+        )
+
+        assert result.should_use_ability is True
+        assert result.ability_name == "healing"

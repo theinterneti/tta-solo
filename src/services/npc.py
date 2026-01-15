@@ -22,6 +22,7 @@ from src.models.npc import (
     CombatEvaluation,
     CombatState,
     DialogueConstraints,
+    EntitySummary,
     MemoryType,
     Motivation,
     NPCDecisionContext,
@@ -267,6 +268,28 @@ class RelationshipDelta(BaseModel):
     trust_change: float = Field(ge=-1.0, le=1.0, default=0.0)
     strength_change: float = Field(ge=-1.0, le=1.0, default=0.0)
     new_relationship_type: RelationshipType | None = None
+
+
+class CombatTurnResult(BaseModel):
+    """Result of determining an NPC's combat turn action."""
+
+    combat_state: CombatState
+    """The NPC's current combat behavior state."""
+
+    action: ActionType
+    """The specific action to take this turn."""
+
+    target_id: UUID | None = None
+    """Target of the action, if applicable."""
+
+    description: str = ""
+    """Brief description of the action."""
+
+    should_use_ability: bool = False
+    """Whether the NPC should use a special ability/spell."""
+
+    ability_name: str | None = None
+    """Name of ability to use, if should_use_ability is True."""
 
 
 # =============================================================================
@@ -841,6 +864,238 @@ class NPCService:
             The recommended combat state
         """
         return get_combat_state(npc_profile, evaluation)
+
+    def build_combat_evaluation(
+        self,
+        npc_id: UUID,
+        npc_hp_percentage: float,
+        entities_present: list[EntitySummary],
+        relationships: list[RelationshipSummary],
+        escape_routes: int = 1,
+        resources_remaining: float = 1.0,
+    ) -> CombatEvaluation:
+        """
+        Build a combat evaluation from current game state.
+
+        Analyzes entities present to determine threat levels and ally status
+        based on the NPC's relationships.
+
+        Args:
+            npc_id: The NPC evaluating the combat situation
+            npc_hp_percentage: NPC's current HP as 0.0-1.0
+            entities_present: Entities in the combat area
+            relationships: NPC's relationships with other entities
+            escape_routes: Number of available escape routes
+            resources_remaining: NPC's remaining resources (spell slots, etc.)
+
+        Returns:
+            CombatEvaluation with threat and ally assessments
+        """
+        # Build relationship lookup for quick access
+        rel_lookup: dict[UUID, RelationshipSummary] = {r.target_id: r for r in relationships}
+
+        # Categorize entities as enemies or allies
+        enemies: list[EntitySummary] = []
+        allies: list[EntitySummary] = []
+
+        for entity in entities_present:
+            if entity.id == npc_id:
+                continue  # Skip self
+
+            rel = rel_lookup.get(entity.id)
+
+            # Determine if enemy or ally based on relationship
+            if rel:
+                if rel.relationship_type in ["HOSTILE_TO", "FEARS"]:
+                    enemies.append(entity)
+                elif rel.relationship_type in ["ALLIED_WITH", "RESPECTS"]:
+                    allies.append(entity)
+                elif rel.trust < -0.3:
+                    # Distrusted entities are treated as potential enemies
+                    enemies.append(entity)
+                elif rel.trust > 0.3:
+                    allies.append(entity)
+                else:
+                    # Neutral - treat as potential threat if they appear threatening
+                    if entity.apparent_threat > THREAT_THRESHOLD:
+                        enemies.append(entity)
+            else:
+                # No relationship - use apparent threat
+                if entity.apparent_threat > THREAT_THRESHOLD:
+                    enemies.append(entity)
+
+        # Calculate threat metrics
+        strongest_threat = 0.0
+        total_threat = 0.0
+        for enemy in enemies:
+            threat = enemy.apparent_threat
+            strongest_threat = max(strongest_threat, threat)
+            total_threat += threat
+
+        # Normalize total threat to 0-1 range (cap at 1.0)
+        total_threat = min(1.0, total_threat)
+
+        # Calculate ally health average
+        ally_health_avg = 1.0
+        if allies:
+            ally_health_sum = sum(a.hp_percentage or 1.0 for a in allies)
+            ally_health_avg = ally_health_sum / len(allies)
+
+        return CombatEvaluation(
+            hp_percentage=npc_hp_percentage,
+            resources_remaining=resources_remaining,
+            escape_routes=escape_routes,
+            enemies_count=len(enemies),
+            strongest_enemy_threat=strongest_threat,
+            total_enemy_threat=total_threat,
+            allies_count=len(allies),
+            ally_health_average=ally_health_avg,
+        )
+
+    def get_npc_combat_turn(
+        self,
+        npc_id: UUID,
+        npc_profile: NPCProfile,
+        evaluation: CombatEvaluation,
+        entities_present: list[EntitySummary],
+        relationships: list[RelationshipSummary],
+    ) -> CombatTurnResult:
+        """
+        Determine the NPC's action for this combat turn.
+
+        Translates the high-level CombatState into a concrete action
+        with target selection based on the tactical situation.
+
+        Args:
+            npc_id: The NPC taking the turn
+            npc_profile: NPC's personality profile
+            evaluation: Current combat evaluation
+            entities_present: Entities in the combat area
+            relationships: NPC's relationships
+
+        Returns:
+            CombatTurnResult with action and target
+        """
+        # Get combat state from personality + evaluation
+        combat_state = self.get_combat_action(npc_profile, evaluation)
+
+        # Build relationship lookup
+        rel_lookup: dict[UUID, RelationshipSummary] = {r.target_id: r for r in relationships}
+
+        # Identify enemies and allies from entities
+        enemies: list[EntitySummary] = []
+        allies: list[EntitySummary] = []
+        injured_allies: list[EntitySummary] = []
+
+        for entity in entities_present:
+            if entity.id == npc_id:
+                continue
+
+            rel = rel_lookup.get(entity.id)
+            is_enemy = False
+            is_ally = False
+
+            if rel:
+                if rel.relationship_type in ["HOSTILE_TO", "FEARS"] or rel.trust < -0.3:
+                    is_enemy = True
+                elif rel.relationship_type in ["ALLIED_WITH", "RESPECTS"] or rel.trust > 0.3:
+                    is_ally = True
+            elif entity.apparent_threat > THREAT_THRESHOLD:
+                is_enemy = True
+
+            if is_enemy:
+                enemies.append(entity)
+            elif is_ally:
+                allies.append(entity)
+                if entity.hp_percentage is not None and entity.hp_percentage < 0.5:
+                    injured_allies.append(entity)
+
+        # Translate combat state to action
+        action: ActionType
+        target_id: UUID | None = None
+        description: str
+        should_use_ability = False
+        ability_name: str | None = None
+
+        if combat_state == CombatState.AGGRESSIVE:
+            action = ActionType.ATTACK
+            # Target the strongest threat
+            if enemies:
+                enemies.sort(key=lambda e: e.apparent_threat, reverse=True)
+                target_id = enemies[0].id
+                description = f"Attacks {enemies[0].name} aggressively"
+            else:
+                # No enemies visible, look for targets
+                action = ActionType.APPROACH
+                description = "Looks for threats to engage"
+
+        elif combat_state == CombatState.DEFENSIVE:
+            # Counterattack if enemies present, otherwise defend
+            if enemies and evaluation.hp_percentage > 0.3:
+                action = ActionType.ATTACK
+                # Target the closest/weakest threat for safer engagement
+                enemies.sort(key=lambda e: e.hp_percentage or 1.0)
+                target_id = enemies[0].id
+                description = f"Cautiously attacks {enemies[0].name}"
+            else:
+                action = ActionType.DEFEND
+                description = "Takes a defensive stance"
+
+        elif combat_state == CombatState.TACTICAL:
+            # Use abilities if available, otherwise position strategically
+            if evaluation.resources_remaining > 0.3 and enemies:
+                # Attempt to use an ability
+                should_use_ability = True
+                ability_name = "tactical_ability"  # Placeholder for actual ability selection
+                action = ActionType.ATTACK
+                enemies.sort(key=lambda e: e.apparent_threat, reverse=True)
+                target_id = enemies[0].id
+                description = f"Uses tactical approach against {enemies[0].name}"
+            else:
+                action = ActionType.DEFEND
+                description = "Repositions tactically"
+
+        elif combat_state == CombatState.SUPPORTIVE:
+            # Prioritize helping injured allies
+            if injured_allies:
+                action = ActionType.HEAL
+                injured_allies.sort(key=lambda a: a.hp_percentage or 1.0)
+                target_id = injured_allies[0].id
+                description = f"Moves to help {injured_allies[0].name}"
+                should_use_ability = True
+                ability_name = "healing"
+            elif allies:
+                action = ActionType.PROTECT
+                # Protect the weakest ally
+                allies.sort(key=lambda a: a.hp_percentage or 1.0)
+                target_id = allies[0].id
+                description = f"Protects {allies[0].name}"
+            else:
+                # No allies, fall back to defensive
+                action = ActionType.DEFEND
+                description = "Takes a defensive stance"
+
+        elif combat_state == CombatState.FLEEING:
+            action = ActionType.FLEE
+            description = "Attempts to escape"
+
+        elif combat_state == CombatState.SURRENDERING:
+            action = ActionType.SURRENDER
+            description = "Surrenders"
+
+        else:
+            # Default fallback
+            action = ActionType.DEFEND
+            description = "Takes a defensive stance"
+
+        return CombatTurnResult(
+            combat_state=combat_state,
+            action=action,
+            target_id=target_id,
+            description=description,
+            should_use_ability=should_use_ability,
+            ability_name=ability_name,
+        )
 
     def build_dialogue_constraints(
         self,

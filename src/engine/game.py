@@ -785,6 +785,249 @@ class GameEngine:
                 # Persist the memory to Neo4j
                 self.neo4j.create_memory(memory_result.memory)
 
+    async def process_npc_combat_turn(
+        self,
+        npc_id: UUID,
+        session: Session,
+        escape_routes: int = 1,
+    ) -> dict[str, str | UUID | int | bool | None]:
+        """
+        Process an NPC's combat turn using the combat AI system.
+
+        Determines what action the NPC takes based on personality, situation,
+        and relationships, then executes that action.
+
+        Args:
+            npc_id: The NPC taking a combat turn
+            session: Current game session
+            escape_routes: Number of available escape routes
+
+        Returns:
+            Dict with combat turn results including action, target, damage, etc.
+        """
+        from src.models.npc import (
+            CombatState,
+            create_npc_profile,
+        )
+        from src.models.npc import (
+            EntitySummary as NPCEntitySummary,
+        )
+        from src.models.npc import (
+            RelationshipSummary as NPCRelationshipSummary,
+        )
+        from src.skills.combat import (
+            Abilities,
+            AttackResult,
+            Combatant,
+            Weapon,
+            resolve_attack,
+        )
+
+        # Get NPC entity
+        npc_entity = self.dolt.get_entity(npc_id, session.universe_id)
+        if not npc_entity:
+            return {"success": False, "error": "NPC not found"}
+
+        # Build NPC profile
+        # FIXME: Should load actual profile from entity.payload or npc_profiles table
+        profile = create_npc_profile(npc_id)
+
+        # Calculate HP percentage
+        hp_percentage = 1.0
+        if npc_entity.stats and npc_entity.stats.hp_max > 0:
+            hp_percentage = npc_entity.stats.hp_current / npc_entity.stats.hp_max
+
+        # Get entities present
+        entities_present: list[NPCEntitySummary] = []
+        located_in_rels = self.neo4j.get_relationships(
+            session.location_id,
+            session.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+        for rel in located_in_rels[: self.config.max_nearby_entities]:
+            entity = self.dolt.get_entity(rel.from_entity_id, session.universe_id)
+            if entity:
+                entities_present.append(
+                    NPCEntitySummary(
+                        id=entity.id,
+                        name=entity.name,
+                        entity_type=entity.type.value,
+                        is_player=(entity.id == session.character_id),
+                        hp_percentage=(
+                            entity.stats.hp_current / entity.stats.hp_max
+                            if entity.stats and entity.stats.hp_max > 0
+                            else 1.0
+                        ),
+                        apparent_threat=0.7 if entity.id == session.character_id else 0.3,
+                    )
+                )
+
+        # Get NPC relationships
+        relationships: list[NPCRelationshipSummary] = []
+        for rel_type in ["KNOWS", "FEARS", "ALLIED_WITH", "HOSTILE_TO", "RESPECTS", "DISTRUSTS"]:
+            rels = self.neo4j.get_relationships(
+                npc_id,
+                session.universe_id,
+                relationship_type=rel_type,
+            )
+            for rel in rels:
+                target_entity = self.dolt.get_entity(rel.to_entity_id, session.universe_id)
+                target_name = target_entity.name if target_entity else "Unknown"
+                relationships.append(
+                    NPCRelationshipSummary(
+                        target_id=rel.to_entity_id,
+                        target_name=target_name,
+                        relationship_type=rel_type,
+                        strength=rel.strength,
+                        trust=rel.trust or 0.0,
+                    )
+                )
+
+        # Build combat evaluation
+        evaluation = self.npc_service.build_combat_evaluation(
+            npc_id=npc_id,
+            npc_hp_percentage=hp_percentage,
+            entities_present=entities_present,
+            relationships=relationships,
+            escape_routes=escape_routes,
+        )
+
+        # Get combat turn action
+        combat_turn = self.npc_service.get_npc_combat_turn(
+            npc_id=npc_id,
+            npc_profile=profile,
+            evaluation=evaluation,
+            entities_present=entities_present,
+            relationships=relationships,
+        )
+
+        # Execute the action
+        result: dict[str, str | UUID | int | bool | None] = {
+            "success": True,
+            "npc_id": npc_id,
+            "npc_name": npc_entity.name,
+            "combat_state": combat_turn.combat_state.value,
+            "action": combat_turn.action.value,
+            "target_id": combat_turn.target_id,
+            "description": combat_turn.description,
+            "damage": None,
+            "hit": None,
+            "critical": None,
+        }
+
+        # If the action is an attack and we have a target, resolve it
+        if combat_turn.action.value == "attack" and combat_turn.target_id:
+            target_entity = self.dolt.get_entity(combat_turn.target_id, session.universe_id)
+            if target_entity:
+                # Build combatants
+                npc_abilities = Abilities(
+                    str=npc_entity.stats.abilities.str_ if npc_entity.stats else 10,
+                    dex=npc_entity.stats.abilities.dex if npc_entity.stats else 10,
+                )
+                attacker = Combatant(
+                    name=npc_entity.name,
+                    ac=npc_entity.stats.ac if npc_entity.stats else 10,
+                    abilities=npc_abilities,
+                    proficiency_bonus=(
+                        npc_entity.stats.proficiency_bonus if npc_entity.stats else 2
+                    ),
+                    proficient_weapons=["claws", "bite", "sword", "dagger"],
+                )
+
+                target_abilities = Abilities(
+                    str=target_entity.stats.abilities.str_ if target_entity.stats else 10,
+                    dex=target_entity.stats.abilities.dex if target_entity.stats else 10,
+                )
+                target = Combatant(
+                    name=target_entity.name,
+                    ac=target_entity.stats.ac if target_entity.stats else 10,
+                    abilities=target_abilities,
+                )
+
+                # Default weapon (could be customized based on NPC type)
+                weapon = Weapon(
+                    name="claws",
+                    damage_dice="1d6",
+                    damage_type="slashing",
+                )
+
+                # Resolve the attack
+                attack_result: AttackResult = resolve_attack(
+                    attacker=attacker,
+                    target=target,
+                    weapon=weapon,
+                )
+
+                result["hit"] = attack_result.hit
+                result["critical"] = attack_result.critical
+                result["damage"] = attack_result.damage
+                result["attack_roll"] = attack_result.attack_roll
+                result["target_ac"] = attack_result.target_ac
+
+                # Update description with attack result
+                if attack_result.critical:
+                    result["description"] = (
+                        f"{npc_entity.name} lands a critical hit on {target_entity.name}!"
+                    )
+                elif attack_result.hit:
+                    result["description"] = (
+                        f"{npc_entity.name} hits {target_entity.name} for {attack_result.damage} damage"
+                    )
+                else:
+                    result["description"] = f"{npc_entity.name} misses {target_entity.name}"
+
+                # Record combat event
+                combat_event = Event(
+                    universe_id=session.universe_id,
+                    event_type=EventType.ATTACK,
+                    actor_id=npc_id,
+                    target_id=combat_turn.target_id,
+                    location_id=session.location_id,
+                    outcome=(
+                        EventOutcome.CRITICAL_SUCCESS
+                        if attack_result.critical
+                        else EventOutcome.SUCCESS
+                        if attack_result.hit
+                        else EventOutcome.FAILURE
+                    ),
+                    payload={
+                        "damage": attack_result.damage,
+                        "attack_roll": attack_result.attack_roll,
+                        "combat_state": combat_turn.combat_state.value,
+                    },
+                    narrative_summary=str(result["description"]),
+                )
+                self.dolt.append_event(combat_event)
+
+                # Form memories for witnesses
+                for entity_summary in entities_present:
+                    if entity_summary.id != npc_id:
+                        memory_result = self.npc_service.form_memory(
+                            entity_summary.id, combat_event
+                        )
+                        if memory_result.formed and memory_result.memory:
+                            self.neo4j.create_memory(memory_result.memory)
+
+        elif combat_turn.combat_state in [CombatState.FLEEING, CombatState.SURRENDERING]:
+            # Record flee/surrender event
+            event_type = (
+                EventType.SKILL_CHECK
+                if combat_turn.combat_state == CombatState.FLEEING
+                else EventType.DIALOGUE
+            )
+            flee_event = Event(
+                universe_id=session.universe_id,
+                event_type=event_type,
+                actor_id=npc_id,
+                location_id=session.location_id,
+                outcome=EventOutcome.SUCCESS,
+                payload={"combat_state": combat_turn.combat_state.value},
+                narrative_summary=combat_turn.description,
+            )
+            self.dolt.append_event(flee_event)
+
+        return result
+
     async def get_npc_reaction(
         self,
         npc_id: UUID,
