@@ -1,0 +1,8 @@
+# Default owner for everything
+* @theinterneti
+
+# Specs are critical - always review
+/specs/ @theinterneti
+
+# Core engine changes
+/src/engine/ @theinterneti

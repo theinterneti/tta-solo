@@ -1,0 +1,53 @@
+name: "✨ Feature Request"
+description: "Request a new feature or enhancement"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before submitting
+        - Check if a spec exists in `/specs/` for this feature
+        - If no spec exists, consider using the "Spec Request" template first
+        
+  - type: input
+    id: spec
+    attributes:
+      label: "Related Spec"
+      description: "Path to the spec file (if one exists)"
+      placeholder: "specs/mechanics.md"
+    validations:
+      required: false
+      
+  - type: textarea
+    id: description
+    attributes:
+      label: "Description"
+      description: "Clear description of the feature"
+      placeholder: "I want to be able to..."
+    validations:
+      required: true
+      
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "Acceptance Criteria"
+      description: "How do we know this is done?"
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: layer
+    attributes:
+      label: "Architecture Layer"
+      description: "Which layer does this primarily affect?"
+      options:
+        - "Neural (LLM/narrative)"
+        - "Symbolic (Python/rules)"
+        - "Bridge (skills)"
+        - "Infrastructure (databases/CI)"
+        - "Not sure"
+    validations:
+      required: true
