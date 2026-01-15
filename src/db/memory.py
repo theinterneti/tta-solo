@@ -31,6 +31,9 @@ class InMemoryDoltRepository:
         self._entities: dict[str, dict[UUID, Entity]] = {"main": {}}
         self._events: dict[str, list[Event]] = {"main": []}
 
+        # NPC profiles (not branched - global across timelines)
+        self._npc_profiles: dict[UUID, dict] = {}
+
     def get_current_branch(self) -> str:
         """Get the name of the current Dolt branch."""
         return self._current_branch
@@ -185,6 +188,32 @@ class InMemoryDoltRepository:
         location_events.sort(key=lambda e: e.timestamp, reverse=True)
         return [deepcopy(e) for e in location_events[:limit]]
 
+    # NPC Profile operations
+    def get_npc_profile(self, entity_id: UUID) -> dict | None:
+        """Get an NPC profile by entity ID."""
+        return deepcopy(self._npc_profiles.get(entity_id))
+
+    def save_npc_profile(
+        self,
+        entity_id: UUID,
+        traits: dict,
+        motivations: list[str],
+        speech_style: str | None = None,
+        quirks: list[str] | None = None,
+        lawful_chaotic: int = 0,
+        good_evil: int = 0,
+    ) -> None:
+        """Save or update an NPC profile."""
+        self._npc_profiles[entity_id] = {
+            "entity_id": entity_id,
+            "traits": deepcopy(traits),
+            "motivations": list(motivations),
+            "speech_style": speech_style,
+            "quirks": list(quirks) if quirks else [],
+            "lawful_chaotic": lawful_chaotic,
+            "good_evil": good_evil,
+        }
+
 
 class InMemoryNeo4jRepository:
     """
@@ -230,6 +259,24 @@ class InMemoryNeo4jRepository:
                 continue
             results.append(deepcopy(rel))
         return results
+
+    def get_relationship_between(
+        self,
+        from_entity_id: UUID,
+        to_entity_id: UUID,
+        universe_id: UUID,
+        relationship_type: str | None = None,
+    ) -> Relationship | None:
+        """Get a specific relationship between two entities."""
+        for rel in self._relationships.values():
+            if rel.universe_id != universe_id:
+                continue
+            if rel.from_entity_id != from_entity_id or rel.to_entity_id != to_entity_id:
+                continue
+            if relationship_type and rel.relationship_type.value != relationship_type:
+                continue
+            return deepcopy(rel)
+        return None
 
     def update_relationship(self, relationship: Relationship) -> None:
         """Update an existing relationship."""

@@ -1137,3 +1137,237 @@ class TestCombatTurnResult:
 
         assert result.should_use_ability is True
         assert result.ability_name == "healing"
+
+
+# =============================================================================
+# Relationship Update Tests
+# =============================================================================
+
+
+class TestRelationshipUpdates:
+    """Tests for NPCService.update_relationship()."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.dolt = InMemoryDoltRepository()
+        self.neo4j = InMemoryNeo4jRepository()
+        self.service = NPCService(dolt=self.dolt, neo4j=self.neo4j)
+
+    def test_update_relationship_damage_decreases_trust(self) -> None:
+        """Test that being damaged decreases trust in the attacker."""
+        from src.models.event import Event, EventOutcome, EventType
+        from src.models.relationships import Relationship, RelationshipType
+
+        npc_id = uuid4()
+        attacker_id = uuid4()
+        universe_id = uuid4()
+
+        # Create initial relationship
+        initial_rel = Relationship(
+            universe_id=universe_id,
+            from_entity_id=npc_id,
+            to_entity_id=attacker_id,
+            relationship_type=RelationshipType.KNOWS,
+            trust=0.5,
+            strength=0.5,
+        )
+        self.neo4j.create_relationship(initial_rel)
+
+        # Attack event targeting the NPC
+        event = Event(
+            universe_id=universe_id,
+            event_type=EventType.DAMAGE,
+            actor_id=attacker_id,
+            target_id=npc_id,
+            outcome=EventOutcome.SUCCESS,
+        )
+
+        delta = self.service.update_relationship(npc_id, attacker_id, event)
+
+        assert delta.trust_change < 0  # Trust should decrease
+        assert delta.strength_change > 0  # Relationship intensifies
+
+        # Check persisted relationship
+        updated_rel = self.neo4j.get_relationship_between(npc_id, attacker_id, universe_id)
+        assert updated_rel is not None
+        assert updated_rel.trust < 0.5  # Trust decreased from initial
+
+    def test_update_relationship_healing_increases_trust(self) -> None:
+        """Test that being healed increases trust in the healer."""
+        from src.models.event import Event, EventOutcome, EventType
+        from src.models.relationships import Relationship, RelationshipType
+
+        npc_id = uuid4()
+        healer_id = uuid4()
+        universe_id = uuid4()
+
+        # Create initial relationship
+        initial_rel = Relationship(
+            universe_id=universe_id,
+            from_entity_id=npc_id,
+            to_entity_id=healer_id,
+            relationship_type=RelationshipType.KNOWS,
+            trust=0.0,
+            strength=0.5,
+        )
+        self.neo4j.create_relationship(initial_rel)
+
+        # Heal event targeting the NPC
+        event = Event(
+            universe_id=universe_id,
+            event_type=EventType.HEAL,
+            actor_id=healer_id,
+            target_id=npc_id,
+            outcome=EventOutcome.SUCCESS,
+        )
+
+        delta = self.service.update_relationship(npc_id, healer_id, event)
+
+        assert delta.trust_change > 0  # Trust should increase
+        assert delta.strength_change > 0  # Relationship intensifies
+
+    def test_update_relationship_creates_new_if_none_exists(self) -> None:
+        """Test that update creates a KNOWS relationship if none exists."""
+        from src.models.event import Event, EventOutcome, EventType
+
+        npc_id = uuid4()
+        stranger_id = uuid4()
+        universe_id = uuid4()
+
+        # Dialogue event (no existing relationship)
+        event = Event(
+            universe_id=universe_id,
+            event_type=EventType.DIALOGUE,
+            actor_id=stranger_id,
+            target_id=npc_id,
+            outcome=EventOutcome.SUCCESS,
+        )
+
+        self.service.update_relationship(npc_id, stranger_id, event)
+
+        # Check that a relationship was created
+        new_rel = self.neo4j.get_relationship_between(npc_id, stranger_id, universe_id)
+        assert new_rel is not None
+        assert new_rel.relationship_type.value == "KNOWS"
+
+    def test_update_relationship_without_persist(self) -> None:
+        """Test that persist=False doesn't modify database."""
+        from src.models.event import Event, EventOutcome, EventType
+
+        npc_id = uuid4()
+        target_id = uuid4()
+        universe_id = uuid4()
+
+        event = Event(
+            universe_id=universe_id,
+            event_type=EventType.DAMAGE,
+            actor_id=target_id,
+            target_id=npc_id,
+            outcome=EventOutcome.SUCCESS,
+        )
+
+        delta = self.service.update_relationship(npc_id, target_id, event, persist=False)
+
+        # Delta should still be calculated
+        assert delta.trust_change < 0
+
+        # But no relationship should exist
+        rel = self.neo4j.get_relationship_between(npc_id, target_id, universe_id)
+        assert rel is None
+
+
+# =============================================================================
+# NPC Profile Persistence Tests
+# =============================================================================
+
+
+class TestProfilePersistence:
+    """Tests for NPCService profile loading and saving."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.dolt = InMemoryDoltRepository()
+        self.neo4j = InMemoryNeo4jRepository()
+        self.service = NPCService(dolt=self.dolt, neo4j=self.neo4j)
+
+    def test_save_and_load_profile(self) -> None:
+        """Test saving and loading an NPC profile."""
+        npc_id = uuid4()
+
+        # Create a profile
+        profile = create_npc_profile(
+            npc_id,
+            openness=80,
+            conscientiousness=60,
+            extraversion=40,
+            agreeableness=70,
+            neuroticism=30,
+            motivations=[Motivation.KNOWLEDGE, Motivation.JUSTICE],
+            speech_style="formal",
+            quirks=["speaks in riddles", "hums when thinking"],
+            lawful_chaotic=50,
+            good_evil=75,
+        )
+
+        # Save it
+        self.service.save_profile(profile)
+
+        # Load it back
+        loaded = self.service.get_profile(npc_id)
+
+        assert loaded is not None
+        assert loaded.entity_id == npc_id
+        assert loaded.traits.openness == 80
+        assert loaded.traits.conscientiousness == 60
+        assert loaded.traits.extraversion == 40
+        assert loaded.traits.agreeableness == 70
+        assert loaded.traits.neuroticism == 30
+        assert loaded.motivations == [Motivation.KNOWLEDGE, Motivation.JUSTICE]
+        assert loaded.speech_style == "formal"
+        assert "speaks in riddles" in loaded.quirks
+        assert loaded.lawful_chaotic == 50
+        assert loaded.good_evil == 75
+
+    def test_get_profile_not_found(self) -> None:
+        """Test that get_profile returns None for unknown NPC."""
+        profile = self.service.get_profile(uuid4())
+        assert profile is None
+
+    def test_get_or_create_profile_existing(self) -> None:
+        """Test get_or_create returns existing profile."""
+        npc_id = uuid4()
+
+        # Save a profile
+        original = create_npc_profile(npc_id, openness=90, speech_style="poetic")
+        self.service.save_profile(original)
+
+        # get_or_create should return the existing one
+        loaded = self.service.get_or_create_profile(npc_id)
+
+        assert loaded.traits.openness == 90
+        assert loaded.speech_style == "poetic"
+
+    def test_get_or_create_profile_new_default(self) -> None:
+        """Test get_or_create creates default profile for new NPC."""
+        npc_id = uuid4()
+
+        profile = self.service.get_or_create_profile(npc_id)
+
+        # Should have default values
+        assert profile.entity_id == npc_id
+        assert profile.traits.openness == 50
+        assert profile.traits.conscientiousness == 50
+
+    def test_get_or_create_profile_with_custom_defaults(self) -> None:
+        """Test get_or_create with custom default traits."""
+        npc_id = uuid4()
+
+        profile = self.service.get_or_create_profile(
+            npc_id,
+            default_traits={"openness": 30, "neuroticism": 80},
+        )
+
+        assert profile.traits.openness == 30
+        assert profile.traits.neuroticism == 80
+        # Others should still be default
+        assert profile.traits.conscientiousness == 50
