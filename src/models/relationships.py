@@ -32,6 +32,7 @@ class RelationshipType(str, Enum):
 
     # Character-to-Location
     LOCATED_IN = "LOCATED_IN"
+    TRAPPED_IN = "TRAPPED_IN"  # Character is trapped and cannot leave
     BORN_IN = "BORN_IN"
     LIVES_IN = "LIVES_IN"
     WORKS_IN = "WORKS_IN"

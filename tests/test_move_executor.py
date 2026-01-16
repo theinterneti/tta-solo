@@ -391,6 +391,66 @@ class TestTakeAway:
         # Should mention one of the items (Torch or Sword)
         assert "torch" in result.narrative.lower() or "sword" in result.narrative.lower()
 
+    @pytest.mark.asyncio
+    async def test_take_away_marks_item_inactive(self, dolt, neo4j, npc_service, session):
+        """TAKE_AWAY should mark the item as inactive in Dolt."""
+        from src.models import create_item
+
+        # Create an item that exists in Dolt
+        item = create_item(
+            universe_id=session.universe_id,
+            name="Magic Sword",
+            description="A gleaming blade",
+        )
+        dolt.save_entity(item)
+
+        # Create context with the item in inventory
+        context = Context(
+            actor=EntitySummary(
+                id=session.character_id,
+                name="Hero",
+                type="character",
+            ),
+            actor_inventory=[
+                EntitySummary(id=item.id, name=item.name, type="item"),
+            ],
+            location=EntitySummary(
+                id=session.location_id,
+                name="Test Location",
+                type="location",
+            ),
+            entities_present=[],
+            exits=[],
+            known_entities=[],
+            recent_events=[],
+            mood=None,
+            danger_level=5,
+        )
+
+        executor = MoveExecutor(
+            dolt=dolt,
+            neo4j=neo4j,
+            npc_service=npc_service,
+            llm=None,
+        )
+
+        move = GMMove(
+            type=GMMoveType.TAKE_AWAY,
+            is_hard=True,
+            description="Something is lost!",
+        )
+
+        result = await executor.execute(move, context, session)
+
+        assert result.success
+        assert "magic sword" in result.narrative.lower()
+
+        # Verify item was marked inactive
+        updated_item = dolt.get_entity(item.id, session.universe_id)
+        assert updated_item is not None
+        assert updated_item.is_active is False
+        assert "[Lost]" in updated_item.description
+
 
 # =============================================================================
 # CAPTURE Tests
@@ -427,8 +487,8 @@ class TestCapture:
         )
 
     @pytest.mark.asyncio
-    async def test_capture_creates_relationship(self, executor, neo4j, basic_context, session):
-        """CAPTURE should create a relationship to the trap location."""
+    async def test_capture_creates_relationships(self, executor, neo4j, basic_context, session):
+        """CAPTURE should create LOCATED_IN and TRAPPED_IN relationships."""
         move = GMMove(
             type=GMMoveType.CAPTURE,
             is_hard=True,
@@ -437,7 +497,8 @@ class TestCapture:
 
         result = await executor.execute(move, basic_context, session)
 
-        assert len(result.relationships_created) == 1
+        # Creates 2 relationships: LOCATED_IN and TRAPPED_IN
+        assert len(result.relationships_created) == 2
 
     @pytest.mark.asyncio
     async def test_capture_narrative_mentions_trapped(self, executor, basic_context, session):
@@ -451,6 +512,49 @@ class TestCapture:
         result = await executor.execute(move, basic_context, session)
 
         assert "trap" in result.narrative.lower()
+
+    @pytest.mark.asyncio
+    async def test_capture_updates_session_location(self, executor, basic_context, session):
+        """CAPTURE should update the session location to the trap."""
+        original_location = session.location_id
+
+        move = GMMove(
+            type=GMMoveType.CAPTURE,
+            is_hard=True,
+            description="You're trapped!",
+        )
+
+        result = await executor.execute(move, basic_context, session)
+
+        assert result.success
+        # Session location should be updated to the trap
+        assert session.location_id != original_location
+        assert session.location_id == result.entities_created[0]
+
+    @pytest.mark.asyncio
+    async def test_capture_creates_trapped_in_relationship(self, executor, neo4j, basic_context, session):
+        """CAPTURE should create a TRAPPED_IN relationship."""
+        move = GMMove(
+            type=GMMoveType.CAPTURE,
+            is_hard=True,
+            description="You're trapped!",
+        )
+
+        result = await executor.execute(move, basic_context, session)
+
+        assert result.success
+        # Should have 2 relationships: LOCATED_IN and TRAPPED_IN
+        assert len(result.relationships_created) == 2
+
+        # Check for TRAPPED_IN relationship
+        trap_id = result.entities_created[0]
+        relationships = neo4j.get_relationships(
+            trap_id,
+            session.universe_id,
+            relationship_type="TRAPPED_IN",
+        )
+        trapped_rel = [r for r in relationships if r.from_entity_id == session.character_id]
+        assert len(trapped_rel) == 1
 
 
 # =============================================================================

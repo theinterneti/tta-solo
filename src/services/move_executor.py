@@ -442,7 +442,12 @@ class MoveExecutor:
         session: Session,
         trigger_reason: str,
     ) -> MoveExecutionResult:
-        """Remove an item from the actor's inventory."""
+        """
+        Remove an item from the actor's inventory.
+
+        Actually marks the item as inactive in Dolt and removes
+        the CARRIES/WIELDS/WEARS relationship from Neo4j.
+        """
         # Find an item to take (prefer equipped items)
         if not context.actor_inventory:
             return MoveExecutionResult(
@@ -451,16 +456,50 @@ class MoveExecutor:
             )
 
         # Select a random item
-        item = random.choice(context.actor_inventory)
+        item_summary = random.choice(context.actor_inventory)
 
-        # Mark as lost (we'd need to update the entity, simplified for now)
-        narrative = f"Your {item.name} slips from your grasp and is lost to the darkness!"
+        # Get the actual entity from Dolt
+        item_entity = self.dolt.get_entity(item_summary.id, session.universe_id)
+        if item_entity is None:
+            # Item doesn't exist in DB, just return narrative
+            return MoveExecutionResult(
+                success=True,
+                narrative=f"Your {item_summary.name} slips from your grasp and is lost!",
+                state_changes=[f"Lost: {item_summary.name}"],
+            )
+
+        # Mark item as inactive
+        item_entity.is_active = False
+        item_entity.description = f"{item_entity.description} [Lost]"
+        self.dolt.save_entity(item_entity)
+
+        # Remove inventory relationships (CARRIES, WIELDS, WEARS)
+        relationships_removed = []
+        for rel_type in ["CARRIES", "WIELDS", "WEARS"]:
+            rel = self.neo4j.get_relationship_between(
+                from_entity_id=context.actor.id,
+                to_entity_id=item_summary.id,
+                universe_id=session.universe_id,
+                relationship_type=rel_type,
+            )
+            if rel is not None:
+                self.neo4j.delete_relationship(rel.id)
+                relationships_removed.append(rel.id)
+
+        # Generate narrative based on how it was lost
+        narratives = [
+            f"Your {item_summary.name} slips from your grasp and is lost to the darkness!",
+            f"In the chaos, your {item_summary.name} is knocked away and lost!",
+            f"With a sickening crunch, your {item_summary.name} is destroyed!",
+            f"Your {item_summary.name} shatters into pieces!",
+        ]
+        narrative = random.choice(narratives)
 
         return MoveExecutionResult(
             success=True,
             narrative=narrative,
-            entities_modified=[item.id],
-            state_changes=[f"Lost: {item.name}"],
+            entities_modified=[item_summary.id],
+            state_changes=[f"Lost: {item_summary.name}"],
         )
 
     async def _execute_capture(
@@ -470,39 +509,79 @@ class MoveExecutor:
         session: Session,
         trigger_reason: str,
     ) -> MoveExecutionResult:
-        """Trap the actor in a location."""
+        """
+        Trap the actor in a location.
+
+        Creates a new trap location, moves the character there,
+        updates the session, and creates a TRAPPED_IN relationship
+        to indicate they cannot easily leave.
+        """
         # Create a trap location
         trap_names = ["Holding Cell", "Pit Trap", "Collapsed Chamber", "Sealed Room"]
-        trap_name = random.choice(trap_names)
+        trap_descriptions = [
+            "A cramped, dark cell with iron bars.",
+            "A deep pit with smooth walls, impossible to climb.",
+            "Rubble seals the way you came - you're cut off.",
+            "The door slams shut behind you with terrible finality.",
+        ]
+        trap_idx = random.randrange(len(trap_names))
+        trap_name = trap_names[trap_idx]
+        trap_desc = trap_descriptions[trap_idx]
 
         trap_location = create_location(
             universe_id=session.universe_id,
             name=trap_name,
-            description="A confined space with no obvious way out...",
+            description=trap_desc,
             danger_level=context.danger_level,
         )
         self.dolt.save_entity(trap_location)
 
-        # Create TRAPPED_IN relationship
-        trapped_rel = Relationship(
+        relationships_created = []
+
+        # Remove old LOCATED_IN relationship
+        old_location_rel = self.neo4j.get_relationship_between(
+            from_entity_id=session.character_id,
+            to_entity_id=session.location_id,
+            universe_id=session.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+        if old_location_rel is not None:
+            self.neo4j.delete_relationship(old_location_rel.id)
+
+        # Create new LOCATED_IN relationship to trap
+        new_location_rel = Relationship(
             universe_id=session.universe_id,
             from_entity_id=session.character_id,
             to_entity_id=trap_location.id,
             relationship_type=RelationshipType.LOCATED_IN,
-            description="Trapped!",
+        )
+        self.neo4j.create_relationship(new_location_rel)
+        relationships_created.append(new_location_rel.id)
+
+        # Create TRAPPED_IN relationship to indicate they cannot easily leave
+        trapped_rel = Relationship(
+            universe_id=session.universe_id,
+            from_entity_id=session.character_id,
+            to_entity_id=trap_location.id,
+            relationship_type=RelationshipType.TRAPPED_IN,
+            description="Cannot leave without help or effort",
         )
         self.neo4j.create_relationship(trapped_rel)
+        relationships_created.append(trapped_rel.id)
+
+        # Update session location
+        session.location_id = trap_location.id
 
         narrative = (
-            f"You find yourself trapped in a {trap_name.lower()}! The walls seem to close in..."
+            f"You find yourself trapped in a {trap_name.lower()}! {trap_desc}"
         )
 
         return MoveExecutionResult(
             success=True,
             narrative=narrative,
             entities_created=[trap_location.id],
-            relationships_created=[trapped_rel.id],
-            state_changes=["Trapped!"],
+            relationships_created=relationships_created,
+            state_changes=["Trapped!", f"Location: {trap_name}"],
         )
 
     async def _execute_reveal_truth(

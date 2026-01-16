@@ -356,10 +356,10 @@ class TestCaptureIntegration:
         assert "trap" in result.narrative.lower()
 
     @pytest.mark.asyncio
-    async def test_capture_creates_relationship(
+    async def test_capture_creates_relationships(
         self, move_executor, neo4j, tavern_context, session
     ):
-        """CAPTURE should create a relationship to the trap."""
+        """CAPTURE should create LOCATED_IN and TRAPPED_IN relationships."""
         move = GMMove(
             type=GMMoveType.CAPTURE,
             is_hard=True,
@@ -369,7 +369,8 @@ class TestCaptureIntegration:
         result = await move_executor.execute(move, tavern_context, session)
 
         assert result.success
-        assert len(result.relationships_created) == 1
+        # Creates 2 relationships: LOCATED_IN and TRAPPED_IN
+        assert len(result.relationships_created) == 2
 
 
 # =============================================================================
