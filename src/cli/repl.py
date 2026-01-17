@@ -12,15 +12,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
+from src.content import create_starter_world
 from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import GameEngine
 from src.engine.models import EngineConfig, TurnResult
-from src.models import (
-    AbilityScores,
-    Universe,
-    create_character,
-    create_location,
-)
+from src.services.npc import NPCService
 
 
 @dataclass
@@ -348,71 +344,18 @@ class GameREPL:
         print(banner)
         print("Type /help for commands, or just describe your action.\n")
 
-    def _create_demo_world(self, state: GameState) -> None:
-        """Create a demo world for testing."""
-        # Create Prime universe
-        universe = Universe(
-            name="Prime",
-            description="The original timeline",
-            branch_name="main",
+    def _create_demo_world(self, state: GameState, npc_service: NPCService) -> None:
+        """Create a demo world using the starter world content."""
+        result = create_starter_world(
+            dolt=state.engine.dolt,
+            neo4j=state.engine.neo4j,
+            npc_service=npc_service,
+            player_name=state.character_name,
         )
-        state.engine.dolt.save_universe(universe)
-        state.universe_id = universe.id
 
-        # Create starting location
-        tavern = create_location(
-            name="The Rusty Dragon Inn",
-            description="A cozy tavern with a roaring fireplace. The smell of ale and roasted meat fills the air.",
-            universe_id=universe.id,
-            danger_level=0,
-            terrain="urban",
-            tags=["inn", "tavern", "safe"],
-        )
-        state.engine.dolt.save_entity(tavern)
-        state.location_id = tavern.id
-
-        # Create player character
-        character = create_character(
-            name=state.character_name,
-            description="A brave adventurer seeking fortune and glory.",
-            universe_id=universe.id,
-            hp_max=10,
-            ac=14,
-            abilities=AbilityScores.model_validate(
-                {
-                    "str": 14,
-                    "dex": 12,
-                    "con": 13,
-                    "int": 10,
-                    "wis": 11,
-                    "cha": 10,
-                }
-            ),
-        )
-        character.current_location_id = tavern.id
-        state.engine.dolt.save_entity(character)
-        state.character_id = character.id
-
-        # Create some NPCs
-        bartender = create_character(
-            name="Ameiko Kaijitsu",
-            description="The friendly bartender and owner of the Rusty Dragon Inn.",
-            universe_id=universe.id,
-            hp_max=18,
-            ac=12,
-        )
-        bartender.current_location_id = tavern.id
-        state.engine.dolt.save_entity(bartender)
-
-        mysterious_stranger = create_character(
-            name="Hooded Stranger",
-            description="A cloaked figure sitting in the corner, nursing a drink.",
-            universe_id=universe.id,
-            hp_max=30,
-            ac=16,
-        )
-        mysterious_stranger.current_location_id = tavern.id
-        state.engine.dolt.save_entity(mysterious_stranger)
+        state.universe_id = result.universe.id
+        state.location_id = result.starting_location_id
+        state.character_id = result.player_character_id
 
     async def run(self, character_name: str = "Hero") -> None:
         """Run the interactive REPL."""
@@ -438,8 +381,8 @@ class GameREPL:
             character_name=character_name,
         )
 
-        # Create demo world
-        self._create_demo_world(state)
+        # Create demo world using starter content
+        self._create_demo_world(state, engine.npc_service)
 
         # Start session
         if state.universe_id and state.character_id and state.location_id:
