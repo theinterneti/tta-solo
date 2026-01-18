@@ -648,11 +648,15 @@ class QuestService:
 
         Returns enhanced quest or None if enhancement fails.
         """
-        if self.llm is None:
+        if self.llm is None or not self.llm.is_available:
             return None
 
         # Build prompt
-        prompt = f"""Enhance this quest description for a fantasy RPG. Keep the same structure but make it more evocative and engaging.
+        system_prompt = (
+            "You are a fantasy RPG quest writer. Enhance quest descriptions to be "
+            "more evocative and engaging while keeping the same core objectives."
+        )
+        user_prompt = f"""Enhance this quest description for a fantasy RPG. Keep the same structure but make it more evocative and engaging.
 
 Quest Name: {quest.name}
 Quest Type: {quest.quest_type.value}
@@ -665,9 +669,9 @@ Current Description:
 Objectives:
 """
         for i, obj in enumerate(quest.objectives, 1):
-            prompt += f"{i}. {obj.description}\n"
+            user_prompt += f"{i}. {obj.description}\n"
 
-        prompt += """
+        user_prompt += """
 Write an enhanced description (2-3 sentences) that:
 - Maintains the same core quest
 - Adds sensory details or emotional hooks
@@ -676,7 +680,13 @@ Write an enhanced description (2-3 sentences) that:
 Return ONLY the enhanced description text, nothing else."""
 
         try:
-            response = await self.llm.generate_text(prompt, max_tokens=200)
+            response = await self.llm.provider.complete(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=200,
+            )
             if response and len(response) > 20:
                 quest.description = response.strip()
                 return quest
