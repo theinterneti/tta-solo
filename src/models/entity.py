@@ -93,6 +93,9 @@ class ItemProperties(BaseModel):
 class LocationProperties(BaseModel):
     """Properties specific to locations."""
 
+    location_type: str = "unknown"
+    """Type of location: tavern, market, dungeon, forest, crypt, etc."""
+
     region: str | None = None
     terrain: str | None = None
     climate: str | None = None
@@ -190,6 +193,7 @@ def create_location(
     universe_id: UUID,
     name: str,
     description: str = "",
+    location_type: str = "unknown",
     region: str | None = None,
     terrain: str | None = None,
     danger_level: int = 0,
@@ -203,6 +207,7 @@ def create_location(
         description=description,
         tags=tags or ["location"],
         location_properties=LocationProperties(
+            location_type=location_type,
             region=region,
             terrain=terrain,
             danger_level=danger_level,

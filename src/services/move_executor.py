@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from src.engine.models import Context, Session
     from src.services.llm import LLMService
     from src.services.npc import NPCService
+    from src.services.quest import QuestService
 
 
 # =============================================================================
@@ -91,6 +92,14 @@ class EnvironmentFeatureParams(BaseModel):
     feature_type: str = "discovery"  # passage, hazard, discovery, hideout, obstacle
     is_dangerous: bool = False
     interaction_hint: str | None = None
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Probability of generating a quest when OFFER_OPPORTUNITY is triggered
+_QUEST_OPPORTUNITY_CHANCE = 0.4
 
 
 # =============================================================================
@@ -321,6 +330,7 @@ class MoveExecutor:
     neo4j: Neo4jRepository
     npc_service: NPCService
     llm: LLMService | None = None
+    quest_service: QuestService | None = None
 
     # Generator registry - maps move types to executor methods
     _generators: dict[
@@ -692,9 +702,17 @@ class MoveExecutor:
         """
         Offer an opportunity with a cost or complication.
 
-        Creates an interactive element that the player might use,
-        but with potential downsides.
+        Can create either:
+        - A quest hook (if quest_service available and NPCs present)
+        - An interactive element that the player might use
         """
+        # 40% chance to generate a quest if conditions are right
+        if self.quest_service is not None and random.random() < _QUEST_OPPORTUNITY_CHANCE:
+            quest_result = await self._try_generate_quest_opportunity(context, session)
+            if quest_result is not None:
+                return quest_result
+
+        # Fall back to creating an interactive feature
         opportunities = [
             (
                 "Hidden Lever",
@@ -747,6 +765,55 @@ class MoveExecutor:
             entities_created=[feature_entity.id],
             relationships_created=[contains_rel.id],
             state_changes=[f"Opportunity: {name}"],
+        )
+
+    async def _try_generate_quest_opportunity(
+        self,
+        context: Context,
+        session: Session,
+    ) -> MoveExecutionResult | None:
+        """
+        Try to generate a quest as an opportunity.
+
+        Returns None if quest generation isn't possible or fails.
+        """
+        if self.quest_service is None:
+            return None
+
+        # Build quest context
+        quest_context = self.quest_service.build_quest_context(
+            universe_id=session.universe_id,
+            location_id=session.location_id,
+        )
+
+        # If no NPCs present, skip quest generation
+        if not quest_context.npcs_present:
+            return None
+
+        # Pick a random NPC as the quest giver
+        giver = random.choice(quest_context.npcs_present)
+        quest_context.giver_id = giver.id
+        quest_context.giver_name = giver.name
+
+        # Generate the quest
+        result = await self.quest_service.generate_quest(quest_context)
+
+        if not result.success or result.quest is None:
+            return None
+
+        quest = result.quest
+
+        # Build narrative
+        narrative = (
+            f"{quest.giver_name} catches your attention. "
+            f'"{quest.description}" '
+            f"(New quest available: {quest.name})"
+        )
+
+        return MoveExecutionResult(
+            success=True,
+            narrative=narrative,
+            state_changes=[f"Quest available: {quest.name}"],
         )
 
     async def _execute_deal_damage(

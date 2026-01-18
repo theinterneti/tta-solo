@@ -13,6 +13,7 @@ from uuid import UUID
 if TYPE_CHECKING:
     from src.models import Entity, Event, Relationship, Universe
     from src.models.npc import NPCMemory
+    from src.models.quest import Quest, QuestStatus
 
 
 class DoltRepository(Protocol):
@@ -120,6 +121,23 @@ class DoltRepository(Protocol):
         good_evil: int = 0,
     ) -> None:
         """Save or update an NPC profile."""
+        ...
+
+    # Quest operations
+    def save_quest(self, quest: Quest) -> None:
+        """Save or update a quest."""
+        ...
+
+    def get_quest(self, quest_id: UUID) -> Quest | None:
+        """Get a quest by ID."""
+        ...
+
+    def get_quests_by_status(self, universe_id: UUID, status: QuestStatus) -> list[Quest]:
+        """Get all quests in a universe with a specific status."""
+        ...
+
+    def get_quests_for_universe(self, universe_id: UUID) -> list[Quest]:
+        """Get all quests in a universe."""
         ...
 
 

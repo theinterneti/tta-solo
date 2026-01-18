@@ -49,6 +49,17 @@ from src.models.npc import (
     create_memory,
     create_npc_profile,
 )
+from src.models.quest import (
+    ObjectiveType,
+    Quest,
+    QuestObjective,
+    QuestReward,
+    QuestStatus,
+    QuestTemplate,
+    QuestType,
+    create_objective,
+    create_quest,
+)
 from src.models.relationships import (
     FearsRelationship,
     KnowsRelationship,
@@ -124,4 +135,14 @@ __all__ = [
     "create_knows_relationship",
     "create_located_in",
     "create_variant",
+    # Quest
+    "Quest",
+    "QuestStatus",
+    "QuestType",
+    "QuestObjective",
+    "ObjectiveType",
+    "QuestReward",
+    "QuestTemplate",
+    "create_quest",
+    "create_objective",
 ]

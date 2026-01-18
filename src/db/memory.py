@@ -13,6 +13,7 @@ from uuid import UUID
 
 from src.models import Entity, Event, Relationship, Universe
 from src.models.npc import NPCMemory
+from src.models.quest import Quest, QuestStatus
 
 
 class InMemoryDoltRepository:
@@ -33,6 +34,9 @@ class InMemoryDoltRepository:
 
         # NPC profiles (not branched - global across timelines)
         self._npc_profiles: dict[UUID, dict] = {}
+
+        # Quests stored by ID (not branched for now)
+        self._quests: dict[UUID, Quest] = {}
 
     def get_current_branch(self) -> str:
         """Get the name of the current Dolt branch."""
@@ -213,6 +217,28 @@ class InMemoryDoltRepository:
             "lawful_chaotic": lawful_chaotic,
             "good_evil": good_evil,
         }
+
+    # Quest operations
+    def save_quest(self, quest: Quest) -> None:
+        """Save or update a quest."""
+        self._quests[quest.id] = deepcopy(quest)
+
+    def get_quest(self, quest_id: UUID) -> Quest | None:
+        """Get a quest by ID."""
+        quest = self._quests.get(quest_id)
+        return deepcopy(quest) if quest else None
+
+    def get_quests_by_status(self, universe_id: UUID, status: QuestStatus) -> list[Quest]:
+        """Get all quests in a universe with a specific status."""
+        return [
+            deepcopy(q)
+            for q in self._quests.values()
+            if q.universe_id == universe_id and q.status == status
+        ]
+
+    def get_quests_for_universe(self, universe_id: UUID) -> list[Quest]:
+        """Get all quests in a universe."""
+        return [deepcopy(q) for q in self._quests.values() if q.universe_id == universe_id]
 
 
 class InMemoryNeo4jRepository:
