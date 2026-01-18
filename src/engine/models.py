@@ -114,6 +114,17 @@ class SkillResult(BaseModel):
     weak_hit_complication: str | None = Field(default=None, description="Complication on weak hit")
     strong_hit_bonus: str | None = Field(default=None, description="Bonus effect on strong hit")
 
+    # Move execution results (entities created by generative moves)
+    entities_created: list[UUID] = Field(
+        default_factory=list, description="Entity IDs created by move execution"
+    )
+    relationships_created: list[UUID] = Field(
+        default_factory=list, description="Relationship IDs created by move execution"
+    )
+    move_used_fallback: bool = Field(
+        default=False, description="True if move execution fell back to templates"
+    )
+
     def to_roll_summary(self, label: str = "Roll") -> RollSummary:
         """Convert to a RollSummary for display."""
         return RollSummary(
