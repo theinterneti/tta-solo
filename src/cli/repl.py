@@ -125,6 +125,12 @@ class GameREPL:
                 description="Show your quests",
                 handler=self._cmd_quests,
             ),
+            Command(
+                name="talk",
+                aliases=["speak", "chat"],
+                description="Talk to an NPC",
+                handler=self._cmd_talk,
+            ),
         ]
 
         for cmd in commands:
@@ -360,6 +366,123 @@ class GameREPL:
 
             lines.append("Type '/quests available' to see more quests.")
             return "\n".join(lines)
+
+    def _cmd_talk(self, state: GameState, args: list[str]) -> str | None:
+        """Handle talk command."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        # Check if NPC name was provided
+        if not args:
+            # List NPCs at current location
+            entities_at_location = state.engine.neo4j.get_relationships(
+                state.location_id,
+                state.universe_id,
+                relationship_type="LOCATED_IN",
+            )
+            
+            npcs = []
+            for rel in entities_at_location:
+                entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
+                if entity and entity.type == "character" and entity.id != state.character_id:
+                    npcs.append(entity.name)
+            
+            if not npcs:
+                return "There's nobody here to talk to."
+            
+            return f"Who do you want to talk to?\n  " + "\n  ".join(npcs) + "\n\nUsage: /talk <name>"
+
+        # Get NPC name from args
+        npc_name = " ".join(args)
+        
+        # Find NPC at current location
+        entities_at_location = state.engine.neo4j.get_relationships(
+            state.location_id,
+            state.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+        
+        npc = None
+        for rel in entities_at_location:
+            entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
+            if entity and entity.type == "character" and entity.name.lower() == npc_name.lower():
+                npc = entity
+                break
+        
+        if not npc:
+            return f"I don't see '{npc_name}' here."
+
+        # Get NPC profile
+        from src.services.npc import NPCService
+        
+        npc_service = state.engine.npc_service  # Use the engine's npc_service
+        profile = npc_service.get_profile(npc.id)
+        
+        if not profile:
+            return f"{npc.name} doesn't seem interested in talking right now."
+
+        # Generate greeting based on personality
+        greeting = self._generate_greeting(npc, profile)
+        
+        # For now, return simple greeting (full conversation system would be more complex)
+        lines = [
+            f"You approach {npc.name}.",
+            "",
+            greeting,
+            "",
+            "(Conversation system coming soon - for now, NPCs just greet you!)",
+            "",
+            "Personality traits:",
+        ]
+        
+        # Show personality
+        traits = profile.traits
+        lines.append(f"  Openness: {traits.openness}/100")
+        lines.append(f"  Conscientiousness: {traits.conscientiousness}/100")
+        lines.append(f"  Extraversion: {traits.extraversion}/100")
+        lines.append(f"  Agreeableness: {traits.agreeableness}/100")
+        lines.append(f"  Neuroticism: {traits.neuroticism}/100")
+        
+        if profile.speech_style:
+            lines.append(f"\nSpeech style: {profile.speech_style}")
+        
+        return "\n".join(lines)
+
+    def _generate_greeting(self, npc, profile) -> str:
+        """Generate a greeting based on NPC personality."""
+        traits = profile.traits
+        
+        # High extraversion = enthusiastic greeting
+        if traits.extraversion > 70:
+            greetings = [
+                f'"{npc.name} beams at you. "Well hello there! What can I do for you today?"',
+                f'"{npc.name} waves energetically. "Great to see you! Pull up a chair!"',
+                f'"{npc.name} calls out cheerfully. "Welcome, welcome! Always glad to see a new face!"',
+            ]
+        # Low extraversion = reserved greeting
+        elif traits.extraversion < 40:
+            greetings = [
+                f'{npc.name} nods quietly. "...Hello."',
+                f'{npc.name} glances up briefly. "Yes?"',
+                f'{npc.name} gives a slight acknowledgment. "What is it?"',
+            ]
+        # High agreeableness = warm greeting
+        elif traits.agreeableness > 70:
+            greetings = [
+                f'{npc.name} smiles warmly. "Hello, friend. How may I help you?"',
+                f'"{npc.name} greets you kindly. "Good to see you. What brings you here?"',
+                f'{npc.name} looks up with a gentle expression. "Welcome. Please, come in."',
+            ]
+        # Default - neutral greeting
+        else:
+            greetings = [
+                f'{npc.name} looks at you. "Yes?"',
+                f'"{npc.name} acknowledges your presence. "What do you need?"',
+                f'{npc.name} turns to face you. "You wanted something?"',
+            ]
+        
+        import secrets
+        return secrets.choice(greetings)
 
     def _is_command(self, text: str) -> bool:
         """Check if input is a special command."""
