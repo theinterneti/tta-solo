@@ -79,12 +79,14 @@ class TestOpenRouterProvider:
         provider._client = None  # Ensure client is not initialized
         assert provider._client is None
 
+    @patch.dict(os.environ, {}, clear=True)
     def test_with_api_key(self) -> None:
         """Test provider is available with API key."""
         provider = OpenRouterProvider(api_key="test-key")
         assert provider.is_available is True
         assert provider.model_name == "anthropic/claude-3-haiku"
 
+    @patch.dict(os.environ, {}, clear=True)
     def test_custom_model(self) -> None:
         """Test custom model configuration."""
         provider = OpenRouterProvider(

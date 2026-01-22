@@ -5,8 +5,9 @@ These tests require a real OpenRouter API key and make actual API calls.
 They are marked with @pytest.mark.integration and skipped by default.
 
 To run these tests:
-    1. Create ~/thein/.env.tta-dev with:
+    1. Create ~/.env.tta-dev with:
        OPENROUTER_API_KEY=your-key-here
+       OPENROUTER_MODEL=xiaomi/mimo-v2-flash:free  # or another free model
 
     2. Run with: uv run pytest tests/test_llm_integration.py -v
 
@@ -31,27 +32,41 @@ from src.services.npc import NPCService
 # =============================================================================
 
 # Path to env file with OpenRouter API key
-ENV_FILE_PATH = Path.home() / "thein" / ".env.tta-dev"
+ENV_FILE_PATH = Path.home() / ".env.tta-dev"
 
 
-def load_api_key() -> str | None:
-    """Load OpenRouter API key from env file or environment."""
+def load_env_vars() -> dict[str, str]:
+    """Load OpenRouter config from env file or environment."""
+    env_vars: dict[str, str] = {}
+
+    # Keys we want to load
+    keys_to_load = ["OPENROUTER_API_KEY", "OPENROUTER_MODEL"]
+
     # First check environment (useful for CI secrets)
-    if key := os.environ.get("OPENROUTER_API_KEY"):
-        return key
+    for key in keys_to_load:
+        if value := os.environ.get(key):
+            env_vars[key] = value
 
-    # Then try the env file
+    # Then try the env file for any missing keys
     if ENV_FILE_PATH.exists():
         for line in ENV_FILE_PATH.read_text().splitlines():
             line = line.strip()
-            if line.startswith("OPENROUTER_API_KEY="):
-                return line.split("=", 1)[1].strip().strip("\"'")
+            if line.startswith("#") or "=" not in line:
+                continue
+            for key in keys_to_load:
+                if line.startswith(f"{key}=") and key not in env_vars:
+                    env_vars[key] = line.split("=", 1)[1].strip().strip("\"'")
 
-    return None
+    # Set env vars so OpenRouterProvider picks them up
+    for key, value in env_vars.items():
+        os.environ[key] = value
+
+    return env_vars
 
 
-# Skip all tests in this module if no API key
-API_KEY = load_api_key()
+# Load config and skip all tests if no API key
+_env_vars = load_env_vars()
+API_KEY = _env_vars.get("OPENROUTER_API_KEY")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not API_KEY, reason="OPENROUTER_API_KEY not configured"),
