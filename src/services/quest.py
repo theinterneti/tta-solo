@@ -102,8 +102,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "The Urgent Delivery",
             ],
             description_patterns=[
-                "{giver} needs a message delivered to {npc} as soon as possible. "
-                "They seem nervous about something.",
+                "{giver} needs a message delivered to {npc} as soon as possible. They seem nervous about something.",
                 "A sealed letter must reach {npc}. {giver} will pay well for discretion.",
             ],
             objective_patterns=[
@@ -122,8 +121,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "A Suspicious Character",
             ],
             description_patterns=[
-                "A mysterious figure has been asking questions around the tavern. "
-                "{giver} wants to know who they are and what they want.",
+                "A mysterious figure has been asking questions around the tavern. {giver} wants to know who they are and what they want.",
                 "Strange rumors are circulating. {giver} asks you to find the source.",
             ],
             objective_patterns=[
@@ -142,8 +140,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "A Dangerous Journey",
             ],
             description_patterns=[
-                "{giver} needs to reach {location} safely but fears the roads. "
-                "Will you accompany them?",
+                "{giver} needs to reach {location} safely but fears the roads. Will you accompany them?",
                 "Travel has become dangerous. {giver} needs an escort to {location}.",
             ],
             objective_patterns=[
@@ -163,8 +160,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "{npc}'s Special Order",
             ],
             description_patterns=[
-                "A valuable shipment never arrived. {giver} suspects foul play "
-                "and needs someone to track it down.",
+                "A valuable shipment never arrived. {giver} suspects foul play and needs someone to track it down.",
                 "{giver} is looking for a rare {item}. They'll pay handsomely if you can find one.",
             ],
             objective_patterns=[
@@ -202,8 +198,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "Recovery Mission",
             ],
             description_patterns=[
-                "{giver} lost something precious in these depths. They need it back "
-                "but dare not venture further themselves.",
+                "{giver} lost something precious in these depths. They need it back but dare not venture further themselves.",
                 "An ancient {item} is said to lie within. {giver} will reward whoever retrieves it.",
             ],
             objective_patterns=[
@@ -224,8 +219,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "Monster Bounty",
             ],
             description_patterns=[
-                "Dangerous creatures have made their lair here. {giver} offers a bounty "
-                "for clearing them out.",
+                "Dangerous creatures have made their lair here. {giver} offers a bounty for clearing them out.",
                 "The dungeon is overrun. Eliminate the threat and claim your reward.",
             ],
             objective_patterns=[
@@ -286,8 +280,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "Mapping the Wilderness",
             ],
             description_patterns=[
-                "{giver} has heard rumors of a hidden place in the forest. "
-                "Find it and report back.",
+                "{giver} has heard rumors of a hidden place in the forest. Find it and report back.",
                 "The forest holds secrets. {giver} wants you to explore and document what you find.",
             ],
             objective_patterns=[
@@ -306,8 +299,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "The Herbalist's Request",
             ],
             description_patterns=[
-                "{giver} needs rare herbs that only grow deep in the forest. "
-                "Be careful of the dangers within.",
+                "{giver} needs rare herbs that only grow deep in the forest. Be careful of the dangers within.",
                 "Medicinal plants are needed urgently. {giver} will pay well for them.",
             ],
             objective_patterns=[
@@ -347,8 +339,7 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
                 "The Inheritance",
             ],
             description_patterns=[
-                "{giver}'s ancestor was buried with something important. "
-                "They need someone brave enough to retrieve it.",
+                "{giver}'s ancestor was buried with something important. They need someone brave enough to retrieve it.",
                 "Ancient tombs hold forgotten knowledge. {giver} seeks answers about the past.",
             ],
             objective_patterns=[

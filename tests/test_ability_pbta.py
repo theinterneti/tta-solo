@@ -4,8 +4,6 @@ Tests for Ability-specific PbtA system.
 
 from __future__ import annotations
 
-import pytest
-
 from src.engine.ability_pbta import (
     AbilityComplication,
     AbilityGMMove,

@@ -4,17 +4,13 @@ Tests for archetype models.
 
 from __future__ import annotations
 
-import pytest
-
 from src.models.archetype import (
     ARCHETYPE_HP_BONUS,
-    FOCUSES_BY_ARCHETYPE,
-    PARADIGM_BONUSES,
     ASSASSIN_FOCUS,
     BULWARK_FOCUS,
-    DUELIST_FOCUS,
     EVOKER_FOCUS,
-    SENTINEL_FOCUS,
+    FOCUSES_BY_ARCHETYPE,
+    PARADIGM_BONUSES,
     TACTICIAN_FOCUS,
     Archetype,
     CharacterClass,

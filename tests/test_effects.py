@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
 from src.models.ability import (
     ConditionEffect,
     DamageEffect,
@@ -17,7 +15,6 @@ from src.models.ability import (
     TargetingType,
     create_spell,
 )
-from src.models.condition import DurationType
 from src.services.effects import EffectPipeline
 
 
@@ -215,7 +212,7 @@ class TestApplyAbilityEffects:
             requires_concentration=True,
         )
 
-        result2 = pipeline.apply_ability_effects(
+        _result2 = pipeline.apply_ability_effects(
             ability=spell2,
             caster_id=caster_id,
             target_ids=[target_id],

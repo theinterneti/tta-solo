@@ -4,8 +4,6 @@ Tests for physics overlay models.
 
 from __future__ import annotations
 
-import pytest
-
 from src.models.ability import AbilitySource
 from src.models.physics_overlay import (
     CYBERPUNK_OVERLAY,

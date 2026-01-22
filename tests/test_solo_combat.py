@@ -6,10 +6,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
 from src.skills.solo_combat import (
-    DamageThresholdConfig,
     DefyDeathConfig,
     FrayDieConfig,
     SoloCombatConfig,

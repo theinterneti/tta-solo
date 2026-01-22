@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
 from src.engine.models import Context, EntitySummary, Intent, IntentType
 from src.engine.router import AbilityContext, SkillRouter
 from src.models.ability import (
@@ -375,8 +373,6 @@ class TestResolveAbilityWithPbtA:
             damage=DamageEffect(dice="3d4+3", damage_type="force"),
             targeting=Targeting(type=TargetingType.SINGLE, range_ft=120),
         )
-
-        resources = EntityResources(spell_slots=create_spell_slots({1: 4}))
 
         intent = Intent(
             type=IntentType.USE_ABILITY,

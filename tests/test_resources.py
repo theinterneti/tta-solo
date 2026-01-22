@@ -397,7 +397,6 @@ class TestRollUsageDie:
     def test_roll_can_degrade(self):
         """Test that rolling can cause degradation (statistical)."""
         # Run multiple times to increase chance of seeing degradation
-        die = create_usage_die("d4")  # Small die, high chance of 1-2
         degraded_count = 0
 
         for _ in range(100):

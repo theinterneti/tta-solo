@@ -6,14 +6,10 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
 from src.models.condition import (
     ActiveEffect,
-    ConditionInstance,
     ConditionType,
     DurationType,
-    EntityCombatState,
     ModifierType,
     create_active_effect,
     create_combat_state,
