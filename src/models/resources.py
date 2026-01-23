@@ -485,12 +485,11 @@ class EntityResources(BaseModel):
                 restored[f"cooldown:{name}"] = amount
 
         # Restore stress on rest
-        if self.stress_momentum is not None:
-            if rest_type == "long":
-                old = self.stress_momentum.stress
-                self.stress_momentum.stress = 0
-                if old > 0:
-                    restored["stress_reduced"] = old
+        if self.stress_momentum is not None and rest_type == "long":
+            old = self.stress_momentum.stress
+            self.stress_momentum.stress = 0
+            if old > 0:
+                restored["stress_reduced"] = old
             # Short rest doesn't auto-reduce stress in this model
 
         # Restore spell slots on long rest

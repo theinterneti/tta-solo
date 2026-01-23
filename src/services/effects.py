@@ -263,13 +263,9 @@ class EffectPipeline:
         damage = damage_result.total
 
         # Check for save
-        if ability.damage.save_ability and target_save is not None:
-            if target_save >= save_dc:
-                # Save succeeded
-                if ability.damage.save_for_half:
-                    damage = damage // 2
-                else:
-                    damage = 0
+        if ability.damage.save_ability and target_save is not None and target_save >= save_dc:
+            # Save succeeded
+            damage = damage // 2 if ability.damage.save_for_half else 0
 
         return damage
 
