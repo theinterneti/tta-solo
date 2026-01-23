@@ -124,7 +124,7 @@ class SkillResult(BaseModel):
     move_used_fallback: bool = Field(
         default=False, description="True if move execution fell back to templates"
     )
-    
+
     # Movement results
     destination_location_id: UUID | None = Field(
         default=None, description="New location ID if movement succeeded"

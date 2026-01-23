@@ -496,13 +496,15 @@ class GameEngine:
                     ):
                         old_location = session.location_id
                         session.location_id = skill_result.destination_location_id
-                        
+
                         # Update player entity location
-                        player_entity = self.dolt.get_entity(session.character_id, session.universe_id)
+                        player_entity = self.dolt.get_entity(
+                            session.character_id, session.universe_id
+                        )
                         if player_entity:
                             player_entity.current_location_id = skill_result.destination_location_id
                             self.dolt.save_entity(player_entity)
-                        
+
                         # Update LOCATED_IN relationship
                         # Remove old relationship
                         old_rels = self.neo4j.get_relationships(
@@ -513,9 +515,10 @@ class GameEngine:
                         for rel in old_rels:
                             if rel.to_entity_id == old_location:
                                 self.neo4j.delete_relationship(rel.id)
-                        
+
                         # Create new relationship
                         from src.models.relationships import Relationship
+
                         self.neo4j.create_relationship(
                             Relationship(
                                 universe_id=session.universe_id,
@@ -524,7 +527,7 @@ class GameEngine:
                                 relationship_type=RelationshipType.LOCATED_IN,
                             )
                         )
-                        
+
                         # Get new location context for narrative
                         turn.context = await self._get_context(session)
 
@@ -741,9 +744,11 @@ class GameEngine:
 
         return inventory
 
-    async def _get_location_exits(self, session: Session) -> tuple[list[str], dict[str, UUID], dict[str, str]]:
+    async def _get_location_exits(
+        self, session: Session
+    ) -> tuple[list[str], dict[str, UUID], dict[str, str]]:
         """Get available exits from the current location.
-        
+
         Returns:
             Tuple of (exit_directions, exit_destinations_map, exit_names_map)
         """

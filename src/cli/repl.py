@@ -276,13 +276,13 @@ class GameREPL:
             state.universe_id,
             relationship_type=None,  # Get all
         )
-        
+
         # Filter for inventory relationships
         item_ids = []
         for rel in inventory_rels:
             if rel.relationship_type.value in ["CARRIES", "WIELDS", "WEARS", "OWNS"]:
                 item_ids.append(rel.to_entity_id)
-        
+
         if not item_ids:
             return "Your inventory is empty."
 
@@ -290,7 +290,7 @@ class GameREPL:
 
         # Get full entity details for each item
         backpack = []
-        
+
         for item_id in item_ids:
             item = state.engine.dolt.get_entity(item_id, state.universe_id)
             if item:
@@ -324,7 +324,9 @@ class GameREPL:
 
         if subcommand == "completed":
             # Get completed quests - for now return empty since we need to filter by character
-            return "You haven't completed any quests yet.\n(Quest tracking by character coming soon)"
+            return (
+                "You haven't completed any quests yet.\n(Quest tracking by character coming soon)"
+            )
 
         elif subcommand == "available":
             # Get available quests at current location
@@ -342,7 +344,9 @@ class GameREPL:
             quests = quest_service.get_active_quests(state.universe_id)
 
             if not quests:
-                return "You have no active quests.\n\nTry '/quests available' to see available quests."
+                return (
+                    "You have no active quests.\n\nTry '/quests available' to see available quests."
+                )
 
             lines = ["Active Quests:", "-" * 40]
             for quest in quests:
@@ -355,7 +359,7 @@ class GameREPL:
                     lines.append(f"      Progress: {completed}/{total} objectives")
 
                     # Show first few objectives
-                    for i, obj in enumerate(quest.objectives[:3]):
+                    for obj in quest.objectives[:3]:
                         status = "[x]" if obj.is_complete else "[ ]"
                         lines.append(f"      {status} {obj.description}")
 
@@ -383,40 +387,43 @@ class GameREPL:
         if not args:
             # List NPCs at current location
             npcs = self._get_npcs_at_location(state)
-            
+
             if not npcs:
                 return "There's nobody here to talk to."
-            
+
             npc_names = [name for _, name in npcs]
-            return f"Who do you want to talk to?\n  " + "\n  ".join(npc_names) + "\n\nUsage: /talk <name>"
+            return (
+                "Who do you want to talk to?\n  "
+                + "\n  ".join(npc_names)
+                + "\n\nUsage: /talk <name>"
+            )
 
         # Get NPC name from args
         npc_name = " ".join(args)
-        
+
         # Find NPC at current location
         npcs = self._get_npcs_at_location(state)
-        
+
         npc = None
         for npc_id, name in npcs:
             if name.lower() == npc_name.lower():
                 npc = state.engine.dolt.get_entity(npc_id, state.universe_id)
                 break
-        
+
         if not npc:
             return f"I don't see '{npc_name}' here."
 
         # Get NPC profile
-        from src.services.npc import NPCService
-        
+
         npc_service = state.engine.npc_service  # Use the engine's npc_service
         profile = npc_service.get_profile(npc.id)
-        
+
         if not profile:
             return f"{npc.name} doesn't seem interested in talking right now."
 
         # Generate greeting based on personality
         greeting = self._generate_greeting(npc, profile)
-        
+
         # For now, return simple greeting (full conversation system would be more complex)
         lines = [
             f"You approach {npc.name}.",
@@ -427,7 +434,7 @@ class GameREPL:
             "",
             "Personality traits:",
         ]
-        
+
         # Show personality
         traits = profile.traits
         lines.append(f"  Openness: {traits.openness}/100")
@@ -435,16 +442,16 @@ class GameREPL:
         lines.append(f"  Extraversion: {traits.extraversion}/100")
         lines.append(f"  Agreeableness: {traits.agreeableness}/100")
         lines.append(f"  Neuroticism: {traits.neuroticism}/100")
-        
+
         if profile.speech_style:
             lines.append(f"\nSpeech style: {profile.speech_style}")
-        
+
         return "\n".join(lines)
 
     def _generate_greeting(self, npc, profile) -> str:
         """Generate a greeting based on NPC personality."""
         traits = profile.traits
-        
+
         # High extraversion = enthusiastic greeting
         if traits.extraversion > 70:
             greetings = [
@@ -473,13 +480,14 @@ class GameREPL:
                 f'"{npc.name} acknowledges your presence. "What do you need?"',
                 f'{npc.name} turns to face you. "You wanted something?"',
             ]
-        
+
         import secrets
+
         return secrets.choice(greetings)
 
     def _get_npcs_at_location(self, state: GameState) -> list[tuple[UUID, str]]:
         """Get NPCs at current location.
-        
+
         Returns:
             List of (entity_id, name) tuples
         """
@@ -488,13 +496,13 @@ class GameREPL:
             state.universe_id,
             relationship_type="LOCATED_IN",
         )
-        
+
         npcs = []
         for rel in entities_at_location:
             entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
             if entity and entity.type == "character" and entity.id != state.character_id:
                 npcs.append((entity.id, entity.name))
-        
+
         return npcs
 
     def _cmd_abilities(self, state: GameState, args: list[str]) -> str | None:
@@ -532,12 +540,12 @@ class GameREPL:
         if character.stats:
             stats = character.stats
             lines.append("Your resources:")
-            
+
             # Show level (determines proficiency bonus)
             if stats.level:
                 prof_bonus = (stats.level - 1) // 4 + 2
                 lines.append(f"  Level: {stats.level} (Proficiency: +{prof_bonus})")
-            
+
             # Show ability modifiers that affect abilities
             if stats.abilities:
                 lines.append("")
@@ -547,10 +555,10 @@ class GameREPL:
                     sign = "+" if mod >= 0 else ""
                     attr_name = attr.upper().ljust(3)  # Left-justify to 3 chars
                     lines.append(f"    {attr_name}: {sign}{mod}")
-        
+
         lines.append("")
         lines.append("Coming soon: Starter abilities will be added based on your character class!")
-        
+
         return "\n".join(lines)
 
     def _is_command(self, text: str) -> bool:
@@ -609,12 +617,12 @@ class GameREPL:
             return "No active session. Something went wrong."
 
         turn_result = await state.engine.process_turn(text, state.session_id)
-        
+
         # Sync GameState with session (location may have changed)
         session = state.engine.get_session(state.session_id)
         if session:
             state.location_id = session.location_id
-        
+
         return self._format_turn_result(turn_result)
 
     def _format_turn_result(self, result: TurnResult) -> str:

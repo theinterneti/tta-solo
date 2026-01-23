@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from src.skills.dice import roll_dice
 
-
 # =============================================================================
 # Configuration Models
 # =============================================================================
@@ -31,24 +30,16 @@ class FrayDieConfig(BaseModel):
         default=True, description="Only affects enemies with HD <= character level"
     )
     level_scaling: bool = Field(default=True, description="Die scales with level")
-    can_split: bool = Field(
-        default=True, description="Can split damage among multiple targets"
-    )
+    can_split: bool = Field(default=True, description="Can split damage among multiple targets")
 
 
 class DefyDeathConfig(BaseModel):
     """Configuration for Defy Death mechanic."""
 
     base_dc: int = Field(default=10, ge=1, description="Base DC for the save")
-    dc_increase_per_use: int = Field(
-        default=5, ge=0, description="DC increase for each use"
-    )
-    grants_exhaustion: bool = Field(
-        default=True, description="Whether success grants exhaustion"
-    )
-    max_uses_per_day: int = Field(
-        default=3, ge=1, description="Maximum uses before long rest"
-    )
+    dc_increase_per_use: int = Field(default=5, ge=0, description="DC increase for each use")
+    grants_exhaustion: bool = Field(default=True, description="Whether success grants exhaustion")
+    max_uses_per_day: int = Field(default=3, ge=1, description="Maximum uses before long rest")
 
 
 class DamageThresholdConfig(BaseModel):
@@ -78,9 +69,7 @@ class SoloCombatConfig(BaseModel):
     defy_death_config: DefyDeathConfig = Field(default_factory=DefyDeathConfig)
 
     # Action Economy
-    heroic_action_enabled: bool = Field(
-        default=True, description="Allow Heroic Action each round"
-    )
+    heroic_action_enabled: bool = Field(default=True, description="Allow Heroic Action each round")
     heroic_action_cost: str = Field(
         default="momentum", description="Cost type: momentum, stress, or free"
     )
@@ -119,9 +108,7 @@ class DamageThresholdResult(BaseModel):
     description: str = Field(description="Hit description")
     effect_on_mook: str = Field(description="What happens to mook-level enemy")
     effect_on_elite: str = Field(description="What happens to elite enemy")
-    is_kill_threshold: bool = Field(
-        default=False, description="Would kill mook-level enemy"
-    )
+    is_kill_threshold: bool = Field(default=False, description="Would kill mook-level enemy")
 
 
 class DefyDeathResult(BaseModel):
@@ -218,9 +205,7 @@ def roll_fray_die(
 
     # Filter valid targets (mooks only if configured)
     if config.affects_mooks_only:
-        valid_targets = [
-            (eid, hd) for eid, hd in enemies if hd <= actor_level
-        ]
+        valid_targets = [(eid, hd) for eid, hd in enemies if hd <= actor_level]
     else:
         valid_targets = enemies
 
@@ -492,7 +477,9 @@ def use_heroic_action(
         HeroicActionResult(
             success=True,
             cost_type=config.heroic_action_cost,
-            cost_amount=config.heroic_action_amount if config.heroic_action_cost == "momentum" else 0,
+            cost_amount=config.heroic_action_amount
+            if config.heroic_action_cost == "momentum"
+            else 0,
         ),
         new_momentum,
         new_stress,

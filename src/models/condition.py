@@ -11,7 +11,6 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-
 # =============================================================================
 # Standard Conditions
 # =============================================================================
@@ -89,9 +88,7 @@ class ConditionInstance(BaseModel):
     duration_remaining: int | None = Field(
         default=None, ge=0, description="Rounds/minutes remaining (if applicable)"
     )
-    applied_at_round: int | None = Field(
-        default=None, description="Combat round when applied"
-    )
+    applied_at_round: int | None = Field(default=None, description="Combat round when applied")
 
     # Save to end
     save_ability: str | None = Field(
@@ -398,9 +395,7 @@ class EntityCombatState(BaseModel):
         self.concentration_source = None
 
         # Also remove any effects that required concentration
-        self.active_effects = [
-            e for e in self.active_effects if not e.requires_concentration
-        ]
+        self.active_effects = [e for e in self.active_effects if not e.requires_concentration]
 
         return lost_ability
 

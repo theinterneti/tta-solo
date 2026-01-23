@@ -168,9 +168,7 @@ class TestCooldownTracker:
 
     def test_recharge_die_size(self):
         """Test getting recharge die size."""
-        tracker = CooldownTracker(
-            max_uses=1, current_uses=1, recharge_die="d8", recharge_on=[7, 8]
-        )
+        tracker = CooldownTracker(max_uses=1, current_uses=1, recharge_die="d8", recharge_on=[7, 8])
         assert tracker.recharge_die_size() == 8
 
     def test_invalid_uses(self):
@@ -421,9 +419,7 @@ class TestTryRechargeAbility:
 
     def test_recharge_at_max(self):
         """Test no recharge when at max uses."""
-        tracker = CooldownTracker(
-            max_uses=2, current_uses=2, recharge_on=[5, 6], recharge_die="d6"
-        )
+        tracker = CooldownTracker(max_uses=2, current_uses=2, recharge_on=[5, 6], recharge_die="d6")
         result = try_recharge_ability(tracker)
         assert result.recharged is False
 
@@ -551,9 +547,7 @@ class TestRestFunctions:
     def test_apply_rest_to_resources(self):
         """Test comprehensive rest application."""
         resources = EntityResources(
-            cooldowns={
-                "breath": create_cooldown_tracker(max_uses=1, recharge_on_rest="short")
-            },
+            cooldowns={"breath": create_cooldown_tracker(max_uses=1, recharge_on_rest="short")},
             spell_slots=create_spell_slots({1: 4, 2: 2}),
             stress_momentum=StressMomentumPool(stress=5),
         )

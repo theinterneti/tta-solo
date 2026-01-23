@@ -207,7 +207,9 @@ class TestApplyAbilityEffects:
             name="Hold Person",
             level=2,
             conditions=[
-                ConditionEffect(condition="paralyzed", duration_type="until_save", save_ability="wis")
+                ConditionEffect(
+                    condition="paralyzed", duration_type="until_save", save_ability="wis"
+                )
             ],
             requires_concentration=True,
         )
@@ -308,14 +310,10 @@ class TestTickCombatRound:
             duration_type="until_save",
             save_ability="con",
         )
-        pipeline.apply_condition(
-            entity_id, universe_id, condition, save_dc=10, target_save=1
-        )
+        pipeline.apply_condition(entity_id, universe_id, condition, save_dc=10, target_save=1)
 
         # Tick with high CON modifier to likely succeed save
-        result = pipeline.tick_combat_round(
-            entity_id, universe_id, ability_modifiers={"con": 10}
-        )
+        result = pipeline.tick_combat_round(entity_id, universe_id, ability_modifiers={"con": 10})
 
         # Should have attempted a save
         assert len(result.saves_attempted) == 1
@@ -408,7 +406,9 @@ class TestRemoveCondition:
         entity_id = uuid4()
         universe_id = uuid4()
 
-        condition = ConditionEffect(condition="frightened", duration_type="rounds", duration_value=3)
+        condition = ConditionEffect(
+            condition="frightened", duration_type="rounds", duration_value=3
+        )
         pipeline.apply_condition(entity_id, universe_id, condition)
 
         removed = pipeline.remove_condition_by_type(entity_id, universe_id, "frightened")

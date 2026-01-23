@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from src.models.ability import AbilitySource
 
-
 # =============================================================================
 # Ability Complication Types
 # =============================================================================

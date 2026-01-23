@@ -24,7 +24,6 @@ from src.models.condition import (
 )
 from src.skills.dice import roll_dice
 
-
 # =============================================================================
 # Result Models
 # =============================================================================
@@ -402,7 +401,8 @@ class EffectPipeline:
             modifier=abs(stat_mod.modifier),
             duration_rounds=stat_mod.duration_value,
             modifier_type=mod_type,
-            requires_concentration=requires_concentration or duration_type == DurationType.CONCENTRATION,
+            requires_concentration=requires_concentration
+            or duration_type == DurationType.CONCENTRATION,
             source_ability_id=source_ability_id,
             source_entity_id=source_entity_id,
         )
@@ -618,7 +618,8 @@ class EffectPipeline:
             # Remove effects from this caster that require concentration
             initial_count = len(state.active_effects)
             state.active_effects = [
-                e for e in state.active_effects
+                e
+                for e in state.active_effects
                 if not (e.requires_concentration and e.source_entity_id == caster_id)
             ]
 
@@ -627,10 +628,7 @@ class EffectPipeline:
 
             # Remove conditions from this caster's abilities
             initial_cond_count = len(state.conditions)
-            state.conditions = [
-                c for c in state.conditions
-                if c.source_entity_id != caster_id
-            ]
+            state.conditions = [c for c in state.conditions if c.source_entity_id != caster_id]
 
             if len(state.conditions) < initial_cond_count and entity_id not in affected:
                 affected.append(entity_id)

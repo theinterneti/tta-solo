@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from src.engine.models import Context, Intent, IntentType, SkillResult
 from src.engine.ability_pbta import apply_ability_pbta
+from src.engine.models import Context, Intent, IntentType, SkillResult
 from src.engine.pbta import (
     PbtAOutcome,
     calculate_pbta_outcome,
@@ -437,7 +437,7 @@ class SkillRouter:
 
         # Get the destination location ID
         destination_location_id = context.exit_destinations.get(destination.lower())
-        
+
         return SkillResult(
             success=True,
             outcome="success",
@@ -494,7 +494,7 @@ class SkillRouter:
         """
         from uuid import UUID
 
-        from src.models.ability import AbilitySource, MechanismType
+        from src.models.ability import MechanismType
         from src.skills.dice import roll_d20
 
         ability_ctx = extra.get("ability")
@@ -538,7 +538,9 @@ class SkillRouter:
             if resources and resources.stress_momentum:
                 if resources.stress_momentum.momentum < cost:
                     resource_available = False
-                    resource_message = f"Insufficient momentum ({resources.stress_momentum.momentum}/{cost})."
+                    resource_message = (
+                        f"Insufficient momentum ({resources.stress_momentum.momentum}/{cost})."
+                    )
                 else:
                     resources.stress_momentum.spend_momentum(cost)
 
@@ -579,6 +581,7 @@ class SkillRouter:
         # Apply effects via pipeline
         # Note: In a full implementation, you'd pass universe_id from context
         from uuid import uuid4
+
         universe_id = uuid4()  # Placeholder - would come from actual context
 
         effect_result = self.effect_pipeline.apply_ability_effects(
@@ -634,7 +637,9 @@ class SkillRouter:
             total=roll_result.total if roll_result else None,
             dc=dc,
             damage=sum(effect_result.damage_dealt.values()) if effect_result.damage_dealt else None,
-            healing=sum(effect_result.healing_done.values()) if effect_result.healing_done else None,
+            healing=sum(effect_result.healing_done.values())
+            if effect_result.healing_done
+            else None,
             conditions=[c.condition_type for c in effect_result.conditions_applied],
             description=description,
             is_critical=is_critical,

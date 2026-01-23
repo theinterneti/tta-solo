@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # =============================================================================
 # Usage Die System
 # =============================================================================
@@ -232,9 +231,7 @@ class StressChangeResult(BaseModel):
     old_stress: int
     new_stress: int
     change: int
-    at_breaking_point: bool = Field(
-        default=False, description="True if now at max stress"
-    )
+    at_breaking_point: bool = Field(default=False, description="True if now at max stress")
 
 
 class MomentumChangeResult(BaseModel):
@@ -263,9 +260,7 @@ class StressMomentumPool(BaseModel):
     def validate_pools(self) -> StressMomentumPool:
         """Ensure values don't exceed maximums."""
         if self.stress > self.stress_max:
-            raise ValueError(
-                f"stress ({self.stress}) cannot exceed stress_max ({self.stress_max})"
-            )
+            raise ValueError(f"stress ({self.stress}) cannot exceed stress_max ({self.stress_max})")
         if self.momentum > self.momentum_max:
             raise ValueError(
                 f"momentum ({self.momentum}) cannot exceed momentum_max ({self.momentum_max})"
@@ -435,9 +430,7 @@ class EntityResources(BaseModel):
     Tracks usage dice, cooldowns, stress/momentum, and spell slots.
     """
 
-    usage_dice: dict[str, UsageDie] = Field(
-        default_factory=dict, description="Named usage dice"
-    )
+    usage_dice: dict[str, UsageDie] = Field(default_factory=dict, description="Named usage dice")
     cooldowns: dict[str, CooldownTracker] = Field(
         default_factory=dict, description="Ability cooldowns keyed by ability name/id"
     )

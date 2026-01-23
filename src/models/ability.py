@@ -13,7 +13,6 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # =============================================================================
 # Source Classifications
 # =============================================================================
@@ -155,9 +154,7 @@ class ConditionEffect(BaseModel):
     duration_value: int | None = Field(
         default=None, ge=1, description="Duration amount (for rounds/minutes)"
     )
-    save_ability: str | None = Field(
-        default=None, description="Ability for save to end early"
-    )
+    save_ability: str | None = Field(default=None, description="Ability for save to end early")
     save_dc_stat: str | None = Field(
         default=None, description="Caster's stat used for DC calculation"
     )
@@ -222,9 +219,7 @@ class Ability(BaseModel):
     targeting: Targeting = Field(default_factory=Targeting)
 
     # Action economy
-    action_cost: str = Field(
-        default="action", description="action, bonus, reaction, free, special"
-    )
+    action_cost: str = Field(default="action", description="action, bonus, reaction, free, special")
     requires_concentration: bool = False
 
     # Metadata
@@ -282,10 +277,7 @@ class Ability(BaseModel):
 
     def is_cantrip(self) -> bool:
         """Check if this is a cantrip (level 0 spell)."""
-        return (
-            self.source == AbilitySource.MAGIC
-            and self.mechanism == MechanismType.FREE
-        )
+        return self.source == AbilitySource.MAGIC and self.mechanism == MechanismType.FREE
 
     def spell_level(self) -> int | None:
         """Get spell level if this is a spell, otherwise None."""

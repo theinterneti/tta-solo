@@ -205,6 +205,7 @@ def list_overlays() -> list[str]:
 # Application Functions
 # =============================================================================
 
+
 def apply_healing_overlay(amount: int, overlay: PhysicsOverlay | None) -> int:
     """Apply overlay modification to healing amount."""
     if overlay is None:
