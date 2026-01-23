@@ -492,15 +492,19 @@ class GameREPL:
         if state.location_id is None or state.universe_id is None:
             return []
 
+        # Assign to local vars for type narrowing
+        location_id = state.location_id
+        universe_id = state.universe_id
+
         entities_at_location = state.engine.neo4j.get_relationships(
-            state.location_id,
-            state.universe_id,
+            location_id,
+            universe_id,
             relationship_type="LOCATED_IN",
         )
 
         npcs = []
         for rel in entities_at_location:
-            entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
+            entity = state.engine.dolt.get_entity(rel.from_entity_id, universe_id)
             if entity and entity.type == "character" and entity.id != state.character_id:
                 npcs.append((entity.id, entity.name))
 
