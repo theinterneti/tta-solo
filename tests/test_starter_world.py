@@ -140,3 +140,44 @@ class TestStarterWorld:
 
         player = dolt.get_entity(result.player_character_id, result.universe.id)
         assert player.name == "Sir Lancelot"
+
+    def test_player_has_starting_gold(self, dolt, neo4j, npc_service):
+        """Player should start with 50gp (5000 copper)."""
+        result = create_starter_world(dolt, neo4j, npc_service)
+
+        player = dolt.get_entity(result.player_character_id, result.universe.id)
+        assert player.stats is not None
+        assert player.stats.gold_copper == 5000  # 50 gold pieces
+
+    def test_merchants_have_sells_relationships(self, dolt, neo4j, npc_service):
+        """Merchants should have SELLS relationships for shop inventory."""
+        result = create_starter_world(dolt, neo4j, npc_service)
+
+        # Check blacksmith sells items
+        blacksmith_sells = neo4j.get_relationships(
+            result.npcs["blacksmith"],
+            result.universe.id,
+            relationship_type="SELLS",
+        )
+        assert len(blacksmith_sells) >= 3  # longsword, chainmail, shield
+
+        # Check merchant sells items
+        merchant_sells = neo4j.get_relationships(
+            result.npcs["merchant"],
+            result.universe.id,
+            relationship_type="SELLS",
+        )
+        assert len(merchant_sells) >= 4  # rations, backpack, lantern, antitoxin
+
+    def test_creates_blacksmith_npc(self, dolt, neo4j, npc_service):
+        """Should create the blacksmith NPC."""
+        result = create_starter_world(dolt, neo4j, npc_service)
+
+        assert "blacksmith" in result.npcs
+        blacksmith = dolt.get_entity(result.npcs["blacksmith"], result.universe.id)
+        assert blacksmith is not None
+        assert "Grimjaw" in blacksmith.name
+
+        # Check blacksmith profile exists
+        blacksmith_profile = npc_service.get_profile(result.npcs["blacksmith"])
+        assert blacksmith_profile is not None

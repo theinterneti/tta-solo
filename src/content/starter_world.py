@@ -593,7 +593,8 @@ def create_starter_world(
         )
 
     # Merchant sells supplies and consumables
-    for item_key in ["rations", "backpack", "lantern", "antitoxin", "potion", "torch", "rope"]:
+    # Note: potion, torch, rope are in player's starting inventory, so we don't sell those
+    for item_key in ["rations", "backpack", "lantern", "antitoxin"]:
         neo4j.create_relationship(
             Relationship(
                 universe_id=universe.id,

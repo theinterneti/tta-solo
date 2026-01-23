@@ -141,7 +141,7 @@ class GameREPL:
             ),
             Command(
                 name="shop",
-                aliases=["buy", "store"],
+                aliases=["store"],
                 description="Browse items for sale",
                 handler=self._cmd_shop,
             ),
@@ -611,16 +611,8 @@ class GameREPL:
                 lines.append(f"\n  {merchant_name}:")
                 if items_for_sale:
                     for item_name, price_copper in items_for_sale:
-                        price_gold = price_copper // 100
-                        price_silver = (price_copper % 100) // 10
-                        price_str = ""
-                        if price_gold:
-                            price_str += f"{price_gold}gp "
-                        if price_silver:
-                            price_str += f"{price_silver}sp"
-                        if not price_str:
-                            price_str = f"{price_copper}cp"
-                        lines.append(f"    - {item_name}: {price_str.strip()}")
+                        price_str = self._format_price(price_copper)
+                        lines.append(f"    - {item_name}: {price_str}")
                 else:
                     lines.append("    (No items for sale)")
             lines.append("\nTo buy: /shop buy <item name>")
@@ -662,9 +654,7 @@ class GameREPL:
                 for rel in sells_rels:
                     item = state.engine.dolt.get_entity(rel.to_entity_id, universe_id)
                     if item and item.item_properties:
-                        items_for_sale.append(
-                            (item.name, item.item_properties.value_copper)
-                        )
+                        items_for_sale.append((item.name, item.item_properties.value_copper))
                 merchants.append((npc_id, npc_name, items_for_sale))
 
         return merchants
@@ -694,9 +684,7 @@ class GameREPL:
                         relationship_type="SELLS",
                     )
                     for rel in sells_rels:
-                        item = state.engine.dolt.get_entity(
-                            rel.to_entity_id, state.universe_id
-                        )
+                        item = state.engine.dolt.get_entity(rel.to_entity_id, state.universe_id)
                         if item and item.name.lower() == item_name.lower():
                             found_item = item
                             found_merchant_name = merchant_name
@@ -765,14 +753,16 @@ class GameREPL:
         )
 
         found_item = None
+        found_rel = None
         for rel in inventory_rels:
             if rel.relationship_type.value in ["CARRIES", "WIELDS", "WEARS", "OWNS"]:
                 item = state.engine.dolt.get_entity(rel.to_entity_id, state.universe_id)
                 if item and item.name.lower() == item_name.lower():
                     found_item = item
+                    found_rel = rel
                     break
 
-        if not found_item:
+        if not found_item or not found_rel:
             return f"You don't have '{item_name}' in your inventory."
 
         if not found_item.item_properties:
@@ -794,16 +784,12 @@ class GameREPL:
         player.stats.gold_copper += sell_price
         state.engine.dolt.save_entity(player)
 
-        # Remove item from inventory (delete CARRIES relationship)
-        # Note: In a full implementation, we'd remove the specific relationship
-        # For now, the item stays in the world but is no longer carried
+        # Remove item from inventory (delete the relationship)
+        state.engine.neo4j.delete_relationship(found_rel.id)
 
         price_str = self._format_price(sell_price)
         new_gold_str = self._format_price(player.stats.gold_copper)
-        return (
-            f"You sold {found_item.name} for {price_str}.\n"
-            f"You now have: {new_gold_str}"
-        )
+        return f"You sold {found_item.name} for {price_str}.\nYou now have: {new_gold_str}"
 
     def _format_price(self, copper: int) -> str:
         """Format copper amount as gold/silver/copper string."""
