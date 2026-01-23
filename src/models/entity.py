@@ -76,6 +76,7 @@ class EntityStats(BaseModel):
     proficiency_bonus: int = Field(default=2, ge=0)
     level: int = Field(default=1, ge=1)
     experience: int = Field(default=0, ge=0)
+    gold_copper: int = Field(default=0, ge=0, description="Wealth in copper pieces")
 
 
 class ItemProperties(BaseModel):
@@ -171,6 +172,7 @@ def create_character(
     abilities: AbilityScores | None = None,
     tags: list[str] | None = None,
     location_id: UUID | None = None,
+    gold_copper: int = 0,
 ) -> Entity:
     """Factory function to create a character entity."""
     return Entity(
@@ -184,6 +186,7 @@ def create_character(
             hp_max=hp_max,
             ac=ac,
             abilities=abilities or AbilityScores(),
+            gold_copper=gold_copper,
         ),
         current_location_id=location_id,
     )

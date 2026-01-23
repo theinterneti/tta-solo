@@ -384,6 +384,54 @@ def create_starter_world(
         )
     )
 
+    # Blacksmith - Grimjaw the Smith
+    blacksmith = create_character(
+        name="Grimjaw the Smith",
+        description=(
+            "A broad-shouldered dwarf with arms like tree trunks and a magnificent "
+            "braided beard. Soot and sweat cover his leather apron, and the ring "
+            "of his hammer echoes from the nearby forge."
+        ),
+        universe_id=universe.id,
+        hp_max=35,
+        ac=13,
+        abilities=AbilityScores.model_validate(
+            {
+                "str": 18,
+                "dex": 10,
+                "con": 16,
+                "int": 12,
+                "wis": 14,
+                "cha": 10,
+            }
+        ),
+    )
+    blacksmith.current_location_id = market.id
+    dolt.save_entity(blacksmith)
+    npcs["blacksmith"] = blacksmith.id
+
+    blacksmith_profile = create_npc_profile(
+        entity_id=blacksmith.id,
+        openness=30,
+        conscientiousness=90,
+        extraversion=35,
+        agreeableness=55,
+        neuroticism=20,
+        motivations=[Motivation.DUTY, Motivation.ARTISTRY, Motivation.RESPECT],
+        speech_style="gruff but fair",
+        quirks=["judges people by their weapons", "respects hard work"],
+    )
+    npc_service.save_profile(blacksmith_profile)
+
+    neo4j.create_relationship(
+        Relationship(
+            universe_id=universe.id,
+            from_entity_id=blacksmith.id,
+            to_entity_id=market.id,
+            relationship_type=RelationshipType.LOCATED_IN,
+        )
+    )
+
     # =========================================================================
     # Create Items
     # =========================================================================
@@ -442,6 +490,122 @@ def create_starter_world(
     items["rope"] = rope.id
 
     # =========================================================================
+    # Create Shop Items (owned by merchants)
+    # =========================================================================
+
+    # Blacksmith items
+    longsword = create_item(
+        universe_id=universe.id,
+        name="Steel Longsword",
+        description="A finely crafted longsword with a keen edge. Grimjaw's finest work.",
+        value_copper=1500,  # 15 gp
+        weight=3.0,
+        rarity="common",
+        tags=["weapon", "sword", "melee", "shop"],
+    )
+    dolt.save_entity(longsword)
+    items["longsword"] = longsword.id
+
+    chainmail = create_item(
+        universe_id=universe.id,
+        name="Chainmail Armor",
+        description="Interlocking metal rings providing solid protection. AC 16.",
+        value_copper=7500,  # 75 gp
+        weight=55.0,
+        rarity="common",
+        tags=["armor", "heavy", "shop"],
+    )
+    dolt.save_entity(chainmail)
+    items["chainmail"] = chainmail.id
+
+    shield = create_item(
+        universe_id=universe.id,
+        name="Wooden Shield",
+        description="A sturdy wooden shield reinforced with iron bands. +2 AC.",
+        value_copper=1000,  # 10 gp
+        weight=6.0,
+        rarity="common",
+        tags=["armor", "shield", "shop"],
+    )
+    dolt.save_entity(shield)
+    items["shield"] = shield.id
+
+    # Merchant items
+    rations = create_item(
+        universe_id=universe.id,
+        name="Rations (1 day)",
+        description="Dried meat, hard cheese, and hardtack. Enough for one day.",
+        value_copper=50,  # 5 sp
+        weight=2.0,
+        rarity="common",
+        tags=["food", "consumable", "shop"],
+    )
+    dolt.save_entity(rations)
+    items["rations"] = rations.id
+
+    backpack = create_item(
+        universe_id=universe.id,
+        name="Adventurer's Backpack",
+        description="A sturdy leather backpack with multiple compartments.",
+        value_copper=200,  # 2 gp
+        weight=5.0,
+        rarity="common",
+        tags=["container", "utility", "shop"],
+    )
+    dolt.save_entity(backpack)
+    items["backpack"] = backpack.id
+
+    lantern = create_item(
+        universe_id=universe.id,
+        name="Hooded Lantern",
+        description="A brass lantern with a hood to direct light. Burns oil.",
+        value_copper=500,  # 5 gp
+        weight=2.0,
+        rarity="common",
+        tags=["light", "tool", "shop"],
+    )
+    dolt.save_entity(lantern)
+    items["lantern"] = lantern.id
+
+    antitoxin = create_item(
+        universe_id=universe.id,
+        name="Antitoxin",
+        description="A vial of murky liquid. Grants advantage on poison saves for 1 hour.",
+        value_copper=500,  # 5 gp
+        weight=0.1,
+        rarity="common",
+        tags=["potion", "consumable", "shop"],
+    )
+    dolt.save_entity(antitoxin)
+    items["antitoxin"] = antitoxin.id
+
+    # Create shop inventory relationships (merchants SELLS items)
+    # Blacksmith sells weapons and armor
+    for item_key in ["longsword", "chainmail", "shield"]:
+        neo4j.create_relationship(
+            Relationship(
+                universe_id=universe.id,
+                from_entity_id=blacksmith.id,
+                to_entity_id=items[item_key],
+                relationship_type=RelationshipType.SELLS,
+                description="shop inventory",
+            )
+        )
+
+    # Merchant sells supplies and consumables
+    # Note: potion, torch, rope are in player's starting inventory, so we don't sell those
+    for item_key in ["rations", "backpack", "lantern", "antitoxin"]:
+        neo4j.create_relationship(
+            Relationship(
+                universe_id=universe.id,
+                from_entity_id=merchant.id,
+                to_entity_id=items[item_key],
+                relationship_type=RelationshipType.SELLS,
+                description="shop inventory",
+            )
+        )
+
+    # =========================================================================
     # Create Player Character
     # =========================================================================
 
@@ -461,6 +625,7 @@ def create_starter_world(
                 "cha": 11,
             }
         ),
+        gold_copper=5000,  # 50 gold pieces starting money
     )
     player.current_location_id = tavern.id
     dolt.save_entity(player)
