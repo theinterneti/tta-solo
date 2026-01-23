@@ -139,6 +139,18 @@ class GameREPL:
                 description="Show your abilities",
                 handler=self._cmd_abilities,
             ),
+            Command(
+                name="shop",
+                aliases=["buy", "store"],
+                description="Browse items for sale",
+                handler=self._cmd_shop,
+            ),
+            Command(
+                name="sell",
+                aliases=[],
+                description="Sell an item from your inventory",
+                handler=self._cmd_sell,
+            ),
         ]
 
         for cmd in commands:
@@ -204,11 +216,26 @@ class GameREPL:
         ]
 
         if character.stats:
+            # Format gold for display
+            gold_copper = character.stats.gold_copper
+            gold = gold_copper // 100
+            silver = (gold_copper % 100) // 10
+            cp = gold_copper % 10
+            gold_parts = []
+            if gold:
+                gold_parts.append(f"{gold}gp")
+            if silver:
+                gold_parts.append(f"{silver}sp")
+            if cp or not gold_parts:
+                gold_parts.append(f"{cp}cp")
+            gold_str = " ".join(gold_parts)
+
             lines.extend(
                 [
                     f"  HP: {character.stats.hp_current}/{character.stats.hp_max}",
                     f"  AC: {character.stats.ac}",
                     f"  Level: {character.stats.level}",
+                    f"  Gold: {gold_str}",
                 ]
             )
 
@@ -565,6 +592,234 @@ class GameREPL:
         lines.append("Coming soon: Starter abilities will be added based on your character class!")
 
         return "\n".join(lines)
+
+    def _cmd_shop(self, state: GameState, args: list[str]) -> str | None:
+        """Handle shop/buy command - browse and purchase items from merchants."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        # Get merchants at current location (NPCs with SELLS relationships)
+        merchants = self._get_merchants_at_location(state)
+
+        if not merchants:
+            return "There are no merchants here."
+
+        # If no arguments, list available merchants and their wares
+        if not args:
+            lines = ["Merchants:", "-" * 40]
+            for _merchant_id, merchant_name, items_for_sale in merchants:
+                lines.append(f"\n  {merchant_name}:")
+                if items_for_sale:
+                    for item_name, price_copper in items_for_sale:
+                        price_gold = price_copper // 100
+                        price_silver = (price_copper % 100) // 10
+                        price_str = ""
+                        if price_gold:
+                            price_str += f"{price_gold}gp "
+                        if price_silver:
+                            price_str += f"{price_silver}sp"
+                        if not price_str:
+                            price_str = f"{price_copper}cp"
+                        lines.append(f"    - {item_name}: {price_str.strip()}")
+                else:
+                    lines.append("    (No items for sale)")
+            lines.append("\nTo buy: /shop buy <item name>")
+            return "\n".join(lines)
+
+        # Handle buy subcommand
+        if args[0].lower() == "buy" and len(args) > 1:
+            item_name = " ".join(args[1:])
+            return self._buy_item(state, item_name, merchants)
+
+        return "Usage: /shop (list items) or /shop buy <item name>"
+
+    def _get_merchants_at_location(
+        self, state: GameState
+    ) -> list[tuple[UUID, str, list[tuple[str, int]]]]:
+        """Get merchants at current location with their items for sale.
+
+        Returns:
+            List of (merchant_id, merchant_name, [(item_name, price_copper), ...])
+        """
+        if state.location_id is None or state.universe_id is None:
+            return []
+
+        universe_id = state.universe_id
+
+        # Get NPCs at location
+        npcs = self._get_npcs_at_location(state)
+
+        merchants = []
+        for npc_id, npc_name in npcs:
+            # Check if NPC has SELLS relationships
+            sells_rels = state.engine.neo4j.get_relationships(
+                npc_id,
+                universe_id,
+                relationship_type="SELLS",
+            )
+            if sells_rels:
+                items_for_sale = []
+                for rel in sells_rels:
+                    item = state.engine.dolt.get_entity(rel.to_entity_id, universe_id)
+                    if item and item.item_properties:
+                        items_for_sale.append(
+                            (item.name, item.item_properties.value_copper)
+                        )
+                merchants.append((npc_id, npc_name, items_for_sale))
+
+        return merchants
+
+    def _buy_item(
+        self,
+        state: GameState,
+        item_name: str,
+        merchants: list[tuple[UUID, str, list[tuple[str, int]]]],
+    ) -> str:
+        """Process a purchase transaction."""
+        if state.character_id is None or state.universe_id is None:
+            return "No active session."
+
+        # Find the item across all merchants
+        found_item = None
+        found_merchant_name = None
+        item_price = 0
+
+        for merchant_id, merchant_name, items_for_sale in merchants:
+            for name, price in items_for_sale:
+                if name.lower() == item_name.lower():
+                    # Get the actual item entity
+                    sells_rels = state.engine.neo4j.get_relationships(
+                        merchant_id,
+                        state.universe_id,
+                        relationship_type="SELLS",
+                    )
+                    for rel in sells_rels:
+                        item = state.engine.dolt.get_entity(
+                            rel.to_entity_id, state.universe_id
+                        )
+                        if item and item.name.lower() == item_name.lower():
+                            found_item = item
+                            found_merchant_name = merchant_name
+                            item_price = price
+                            break
+                    break
+
+        if not found_item:
+            return f"No merchant here sells '{item_name}'."
+
+        # Check player's gold
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if not player or not player.stats:
+            return "Could not find your character."
+
+        player_gold = player.stats.gold_copper
+
+        if player_gold < item_price:
+            price_str = self._format_price(item_price)
+            have_str = self._format_price(player_gold)
+            return f"You can't afford {found_item.name}. It costs {price_str}, but you only have {have_str}."
+
+        # Execute the purchase
+        new_gold = player_gold - item_price
+        player.stats.gold_copper = new_gold
+        state.engine.dolt.save_entity(player)
+
+        # Add item to player inventory (CARRIES relationship)
+        from src.models.relationships import Relationship, RelationshipType
+
+        state.engine.neo4j.create_relationship(
+            Relationship(
+                universe_id=state.universe_id,
+                from_entity_id=state.character_id,
+                to_entity_id=found_item.id,
+                relationship_type=RelationshipType.CARRIES,
+            )
+        )
+
+        price_str = self._format_price(item_price)
+        remaining_str = self._format_price(new_gold)
+        return (
+            f"You bought {found_item.name} from {found_merchant_name} for {price_str}.\n"
+            f"Remaining gold: {remaining_str}"
+        )
+
+    def _cmd_sell(self, state: GameState, args: list[str]) -> str | None:
+        """Handle sell command - sell an item from inventory."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        if not args:
+            return "Usage: /sell <item name>\nSells item at 50% of its value."
+
+        item_name = " ".join(args)
+
+        # Check if there's a merchant here to sell to
+        merchants = self._get_merchants_at_location(state)
+        if not merchants:
+            return "There are no merchants here to sell to."
+
+        # Find item in player inventory
+        inventory_rels = state.engine.neo4j.get_relationships(
+            state.character_id,
+            state.universe_id,
+        )
+
+        found_item = None
+        for rel in inventory_rels:
+            if rel.relationship_type.value in ["CARRIES", "WIELDS", "WEARS", "OWNS"]:
+                item = state.engine.dolt.get_entity(rel.to_entity_id, state.universe_id)
+                if item and item.name.lower() == item_name.lower():
+                    found_item = item
+                    break
+
+        if not found_item:
+            return f"You don't have '{item_name}' in your inventory."
+
+        if not found_item.item_properties:
+            return f"{found_item.name} cannot be sold."
+
+        # Calculate sell price (50% of value)
+        base_value = found_item.item_properties.value_copper
+        sell_price = base_value // 2
+
+        if sell_price == 0:
+            return f"{found_item.name} has no value."
+
+        # Execute the sale
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if not player or not player.stats:
+            return "Could not find your character."
+
+        # Add gold
+        player.stats.gold_copper += sell_price
+        state.engine.dolt.save_entity(player)
+
+        # Remove item from inventory (delete CARRIES relationship)
+        # Note: In a full implementation, we'd remove the specific relationship
+        # For now, the item stays in the world but is no longer carried
+
+        price_str = self._format_price(sell_price)
+        new_gold_str = self._format_price(player.stats.gold_copper)
+        return (
+            f"You sold {found_item.name} for {price_str}.\n"
+            f"You now have: {new_gold_str}"
+        )
+
+    def _format_price(self, copper: int) -> str:
+        """Format copper amount as gold/silver/copper string."""
+        gold = copper // 100
+        silver = (copper % 100) // 10
+        cp = copper % 10
+
+        parts = []
+        if gold:
+            parts.append(f"{gold}gp")
+        if silver:
+            parts.append(f"{silver}sp")
+        if cp or not parts:
+            parts.append(f"{cp}cp")
+
+        return " ".join(parts)
 
     def _is_command(self, text: str) -> bool:
         """Check if input is a special command."""

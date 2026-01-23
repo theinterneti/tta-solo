@@ -45,6 +45,7 @@ class RelationshipType(str, Enum):
     WEARS = "WEARS"
     CREATED = "CREATED"
     SEEKS = "SEEKS"
+    SELLS = "SELLS"  # Merchant sells item (shop inventory)
 
     # Character-to-Faction
     MEMBER_OF = "MEMBER_OF"
