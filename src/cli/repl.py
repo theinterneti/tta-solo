@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
@@ -17,6 +18,7 @@ from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import GameEngine
 from src.engine.models import EngineConfig, TurnResult
 from src.services.npc import NPCService
+from src.services.quest import QuestService
 
 
 @dataclass
@@ -315,8 +317,6 @@ class GameREPL:
         if state.character_id is None or state.universe_id is None:
             return "No character loaded."
 
-        from src.services.quest import QuestService
-
         quest_service = QuestService(state.engine.dolt, state.engine.neo4j)
 
         # Handle subcommands
@@ -455,9 +455,9 @@ class GameREPL:
         # High extraversion = enthusiastic greeting
         if traits.extraversion > 70:
             greetings = [
-                f'"{npc.name} beams at you. "Well hello there! What can I do for you today?"',
-                f'"{npc.name} waves energetically. "Great to see you! Pull up a chair!"',
-                f'"{npc.name} calls out cheerfully. "Welcome, welcome! Always glad to see a new face!"',
+                f'{npc.name} beams at you. "Well hello there! What can I do for you today?"',
+                f'{npc.name} waves energetically. "Great to see you! Pull up a chair!"',
+                f'{npc.name} calls out cheerfully. "Welcome, welcome! Always glad to see a new face!"',
             ]
         # Low extraversion = reserved greeting
         elif traits.extraversion < 40:
@@ -470,18 +470,16 @@ class GameREPL:
         elif traits.agreeableness > 70:
             greetings = [
                 f'{npc.name} smiles warmly. "Hello, friend. How may I help you?"',
-                f'"{npc.name} greets you kindly. "Good to see you. What brings you here?"',
+                f'{npc.name} greets you kindly. "Good to see you. What brings you here?"',
                 f'{npc.name} looks up with a gentle expression. "Welcome. Please, come in."',
             ]
         # Default - neutral greeting
         else:
             greetings = [
                 f'{npc.name} looks at you. "Yes?"',
-                f'"{npc.name} acknowledges your presence. "What do you need?"',
+                f'{npc.name} acknowledges your presence. "What do you need?"',
                 f'{npc.name} turns to face you. "You wanted something?"',
             ]
-
-        import secrets
 
         return secrets.choice(greetings)
 
