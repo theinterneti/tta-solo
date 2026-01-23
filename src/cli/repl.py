@@ -35,6 +35,8 @@ class GameState:
     running: bool = True
     conversation: ConversationContext | None = None
     """Active conversation if in conversation mode."""
+    pending_talk_npc: "Entity | None" = None
+    """NPC that player wants to talk to (for async handler)."""
 
 
 @dataclass
@@ -450,7 +452,7 @@ class GameREPL:
 
         # Return None to let async handler take over
         # Store the NPC info for the async handler
-        state._pending_talk_npc = npc  # type: ignore[attr-defined]
+        state.pending_talk_npc = npc
         return None
 
     async def _start_conversation(self, state: GameState, npc) -> str:
@@ -862,9 +864,9 @@ class GameREPL:
                 if result is not None:
                     return result
                 # Check if talk command wants to start a conversation
-                if cmd_name == "talk" and hasattr(state, "_pending_talk_npc"):
-                    npc = state._pending_talk_npc  # type: ignore[attr-defined]
-                    delattr(state, "_pending_talk_npc")
+                if cmd_name == "talk" and state.pending_talk_npc is not None:
+                    npc = state.pending_talk_npc
+                    state.pending_talk_npc = None
                     return await self._start_conversation(state, npc)
                 # Fall through to engine processing
                 # Preserve arguments for commands like /fork that need them

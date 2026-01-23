@@ -7,7 +7,7 @@ topics, dialogue choices, and conversation state.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -90,7 +90,7 @@ class DialogueExchange(BaseModel):
     npc_response: str
     """The NPC's response."""
 
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     """When this exchange occurred."""
 
 
@@ -116,7 +116,7 @@ class ConversationContext(BaseModel):
     """Where the conversation is happening."""
 
     # Conversation state
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     """When the conversation started."""
 
     turn_count: int = 0

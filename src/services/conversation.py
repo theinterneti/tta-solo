@@ -7,6 +7,7 @@ LLM-powered responses, and conversation state.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from src.models.entity import Entity
     from src.services.llm import LLMService
     from src.services.npc import NPCService
+
+logger = logging.getLogger(__name__)
 
 
 # Fallback responses when LLM is unavailable
@@ -167,6 +170,7 @@ class ConversationService:
             relationships=relationships,
             attitude=attitude,
             location_id=location_id,
+            universe_id=universe_id,
         )
 
         # Build initial dialogue choices
@@ -320,13 +324,14 @@ class ConversationService:
         relationships: list[RelationshipSummary],
         attitude: str,
         location_id: UUID,
+        universe_id: UUID,
     ) -> str:
         """Generate an appropriate greeting."""
         # Try LLM first
         if self.llm is not None and self.llm.is_available and profile:
             try:
                 # Get location name for context
-                location = self.dolt.get_entity(location_id, profile.entity_id)
+                location = self.dolt.get_entity(location_id, universe_id)
                 situation = f"The player approaches {npc_name} to start a conversation."
                 if location:
                     situation = f"At {location.name}. {situation}"
@@ -339,7 +344,9 @@ class ConversationService:
                     situation=situation,
                     in_combat=False,
                 )
-            except Exception:
+            except Exception as e:
+                # Log the error for debugging but continue with fallback
+                logger.debug("LLM greeting generation failed: %s", e)
                 pass  # Fall through to fallback
 
         # Fallback greeting
@@ -365,7 +372,9 @@ class ConversationService:
                     situation="The player is ending the conversation.",
                     in_combat=False,
                 )
-            except Exception:
+            except Exception as e:
+                # Log the error for debugging but continue with fallback
+                logger.debug("LLM farewell generation failed: %s", e)
                 pass
 
         # Fallback
@@ -396,7 +405,9 @@ class ConversationService:
                     situation=situation,
                     in_combat=False,
                 )
-            except Exception:
+            except Exception as e:
+                # Log the error for debugging but continue with fallback
+                logger.debug("LLM response generation failed: %s", e)
                 pass  # Fall through to fallback
 
         # Fallback response
@@ -560,7 +571,10 @@ class ConversationService:
         memory = create_memory(
             npc_id=context.npc_id,
             memory_type=memory_type,
-            description=f"Player said: '{player_input[:100]}...' about {topic.value}",
+            description=(
+                f"Player said: '{player_input[:100]}"
+                f"{'...' if len(player_input) > 100 else ''}' about {topic.value}"
+            ),
             subject_id=context.player_id,
             emotional_valence=emotional_valence,
             importance=importance,
