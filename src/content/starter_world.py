@@ -19,6 +19,13 @@ from src.models import (
     create_location,
 )
 from src.models.npc import Motivation, create_npc_profile
+from src.models.quest import (
+    ObjectiveType,
+    QuestReward,
+    QuestType,
+    create_objective,
+    create_quest,
+)
 from src.models.relationships import Relationship, RelationshipType
 from src.services.npc import NPCService
 
@@ -478,6 +485,109 @@ def create_starter_world(
                 relationship_type=RelationshipType.CARRIES,
             )
         )
+
+    # =========================================================================
+    # Create Starter Quests
+    # =========================================================================
+
+    # Quest 1: "Welcome to Sandpoint" - Tutorial/introduction quest
+    welcome_quest = create_quest(
+        universe_id=universe.id,
+        name="Welcome to Sandpoint",
+        description=(
+            "Ameiko has suggested you familiarize yourself with the town. "
+            "Explore the market and meet some of the locals."
+        ),
+        quest_type=QuestType.EXPLORE,
+        objectives=[
+            create_objective(
+                description="Visit the Market Square",
+                objective_type=ObjectiveType.REACH_LOCATION,
+                target_location_id=market.id,
+            ),
+            create_objective(
+                description="Talk to the merchant Vorvashali Voon",
+                objective_type=ObjectiveType.TALK_TO_NPC,
+                target_entity_id=merchant.id,
+                target_entity_name=merchant.name,
+            ),
+        ],
+        giver_id=bartender.id,
+        giver_name=bartender.name,
+        rewards=QuestReward(
+            gold=25,
+            experience=50,
+        ),
+        difficulty=1,
+        tags=["tutorial", "introduction", "exploration"],
+    )
+    dolt.save_quest(welcome_quest)
+
+    # Quest 2: "The Hooded Stranger's Request" - Mystery quest
+    stranger_quest = create_quest(
+        universe_id=universe.id,
+        name="The Hooded Stranger's Request",
+        description=(
+            "The mysterious stranger in the corner has been watching you. "
+            "Perhaps they have work for a capable adventurer?"
+        ),
+        quest_type=QuestType.INVESTIGATE,
+        objectives=[
+            create_objective(
+                description="Speak with the Hooded Stranger",
+                objective_type=ObjectiveType.TALK_TO_NPC,
+                target_entity_id=stranger.id,
+                target_entity_name=stranger.name,
+            ),
+            create_objective(
+                description="Investigate the Old Crypt",
+                objective_type=ObjectiveType.REACH_LOCATION,
+                target_location_id=crypt.id,
+            ),
+        ],
+        giver_id=stranger.id,
+        giver_name=stranger.name,
+        rewards=QuestReward(
+            gold=100,
+            experience=150,
+        ),
+        difficulty=3,
+        tags=["mystery", "exploration", "danger"],
+    )
+    dolt.save_quest(stranger_quest)
+
+    # Quest 3: "Goblin Trouble" - Combat quest
+    goblin_quest = create_quest(
+        universe_id=universe.id,
+        name="Goblin Trouble in the Woods",
+        description=(
+            "Vorvashali has heard reports of goblins in Tickwood Forest "
+            "harassing travelers. Clear them out and make the road safe."
+        ),
+        quest_type=QuestType.HUNT,
+        objectives=[
+            create_objective(
+                description="Travel to Tickwood Forest",
+                objective_type=ObjectiveType.REACH_LOCATION,
+                target_location_id=forest.id,
+            ),
+            create_objective(
+                description="Defeat the goblin raiders (0/3)",
+                objective_type=ObjectiveType.DEFEAT_ENEMY,
+                quantity=3,
+                target_entity_name="Goblin",
+            ),
+        ],
+        giver_id=merchant.id,
+        giver_name=merchant.name,
+        rewards=QuestReward(
+            gold=75,
+            experience=200,
+        ),
+        difficulty=2,
+        tags=["combat", "goblins", "forest"],
+    )
+    dolt.save_quest(goblin_quest)
 
     return StarterWorldResult(
         universe=universe,

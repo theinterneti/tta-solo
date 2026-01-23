@@ -489,10 +489,47 @@ class GameEngine:
                     turn.skill_results.append(skill_result)
 
                     # Update location if movement succeeded
-                    if turn.intent.type == IntentType.MOVE and skill_result.success:
-                        # In a real implementation, we'd resolve the destination
-                        # to an actual location ID
-                        pass
+                    if (
+                        turn.intent.type == IntentType.MOVE
+                        and skill_result.success
+                        and skill_result.destination_location_id
+                    ):
+                        old_location = session.location_id
+                        session.location_id = skill_result.destination_location_id
+
+                        # Update player entity location
+                        player_entity = self.dolt.get_entity(
+                            session.character_id, session.universe_id
+                        )
+                        if player_entity:
+                            player_entity.current_location_id = skill_result.destination_location_id
+                            self.dolt.save_entity(player_entity)
+
+                        # Update LOCATED_IN relationship
+                        # Remove old relationship
+                        old_rels = self.neo4j.get_relationships(
+                            session.character_id,
+                            session.universe_id,
+                            relationship_type="LOCATED_IN",
+                        )
+                        for rel in old_rels:
+                            if rel.to_entity_id == old_location:
+                                self.neo4j.delete_relationship(rel.id)
+
+                        # Create new relationship
+                        from src.models.relationships import Relationship
+
+                        self.neo4j.create_relationship(
+                            Relationship(
+                                universe_id=session.universe_id,
+                                from_entity_id=session.character_id,
+                                to_entity_id=skill_result.destination_location_id,
+                                relationship_type=RelationshipType.LOCATED_IN,
+                            )
+                        )
+
+                        # Get new location context for narrative
+                        turn.context = await self._get_context(session)
 
                 # Phase 5: Generate narrative
                 turn.narrative = await self.narrator.generate(
@@ -653,7 +690,7 @@ class GameEngine:
         actor_inventory = await self._get_actor_inventory(session)
 
         # Get location exits (CONNECTED_TO relationships)
-        exits = await self._get_location_exits(session)
+        exits, exit_destinations, exit_names = await self._get_location_exits(session)
 
         # 4. Get actor's relationships (KNOWS, FEARS, etc.)
         known_entities = await self._get_actor_relationships(session)
@@ -680,6 +717,8 @@ class GameEngine:
             location=location,
             entities_present=entities_present,
             exits=exits,
+            exit_destinations=exit_destinations,
+            exit_names=exit_names,
             known_entities=known_entities,
             recent_events=event_summaries,
             mood=mood,
@@ -705,9 +744,17 @@ class GameEngine:
 
         return inventory
 
-    async def _get_location_exits(self, session: Session) -> list[str]:
-        """Get available exits from the current location."""
+    async def _get_location_exits(
+        self, session: Session
+    ) -> tuple[list[str], dict[str, UUID], dict[str, str]]:
+        """Get available exits from the current location.
+
+        Returns:
+            Tuple of (exit_directions, exit_destinations_map, exit_names_map)
+        """
         exits = []
+        exit_destinations = {}
+        exit_names = {}
         connected_rels = self.neo4j.get_relationships(
             session.location_id,
             session.universe_id,
@@ -720,8 +767,10 @@ class GameEngine:
                 # Use description as exit name if available, otherwise use location name
                 exit_name = rel.description if rel.description else connected_location.name
                 exits.append(exit_name)
+                exit_destinations[exit_name.lower()] = rel.to_entity_id
+                exit_names[exit_name.lower()] = connected_location.name
 
-        return exits
+        return exits, exit_destinations, exit_names
 
     async def _get_actor_relationships(self, session: Session) -> list[RelationshipSummary]:
         """Get actor's relationships with other entities (KNOWS, FEARS, etc.)."""

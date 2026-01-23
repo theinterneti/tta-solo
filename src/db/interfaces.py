@@ -275,3 +275,14 @@ class Neo4jRepository(Protocol):
     def delete_memory(self, memory_id: UUID) -> None:
         """Delete a memory."""
         ...
+
+    # Inventory operations
+    def get_owned_items(self, character_id: UUID) -> list[Entity]:
+        """Get all items owned by a character via OWNS relationships."""
+        ...
+
+    def get_entities_at_location(
+        self, location_id: UUID, universe_id: UUID, entity_type: str | None = None
+    ) -> list[Entity]:
+        """Get all entities at a specific location."""
+        ...

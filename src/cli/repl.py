@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
@@ -17,6 +18,7 @@ from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import GameEngine
 from src.engine.models import EngineConfig, TurnResult
 from src.services.npc import NPCService
+from src.services.quest import QuestService
 
 
 @dataclass
@@ -113,6 +115,30 @@ class GameREPL:
                 description="Clear the screen",
                 handler=self._cmd_clear,
             ),
+            Command(
+                name="inventory",
+                aliases=["inv", "i"],
+                description="Show your inventory",
+                handler=self._cmd_inventory,
+            ),
+            Command(
+                name="quests",
+                aliases=["quest", "q"],
+                description="Show your quests",
+                handler=self._cmd_quests,
+            ),
+            Command(
+                name="talk",
+                aliases=["speak", "chat"],
+                description="Talk to an NPC",
+                handler=self._cmd_talk,
+            ),
+            Command(
+                name="abilities",
+                aliases=["ab", "spells"],
+                description="Show your abilities",
+                handler=self._cmd_abilities,
+            ),
         ]
 
         for cmd in commands:
@@ -153,8 +179,11 @@ class GameREPL:
         return "\n".join(lines)
 
     def _cmd_look(self, state: GameState, args: list[str]) -> str | None:
-        """Handle look command - returns None to process as regular input."""
-        return None  # Let the engine handle it
+        """Handle look command - enhanced version with more details."""
+        # Let the engine generate the base narrative through normal processing
+        # But we'll return None so it goes through the engine, then we can enhance later
+        # For now, the engine's look is already pretty good with NPCs and exits
+        return None  # Let the engine handle it - already shows location, NPCs, exits
 
     def _cmd_status(self, state: GameState, args: list[str]) -> str | None:
         """Handle status command."""
@@ -237,6 +266,306 @@ class GameREPL:
         os.system("cls" if os.name == "nt" else "clear")
         return None
 
+    def _cmd_inventory(self, state: GameState, args: list[str]) -> str | None:
+        """Handle inventory command."""
+        if state.character_id is None or state.universe_id is None:
+            return "No character loaded."
+
+        # Get inventory from context (already populated by engine)
+        # We can get it by querying relationships directly
+        inventory_rels = state.engine.neo4j.get_relationships(
+            state.character_id,
+            state.universe_id,
+            relationship_type=None,  # Get all
+        )
+
+        # Filter for inventory relationships
+        item_ids = []
+        for rel in inventory_rels:
+            if rel.relationship_type.value in ["CARRIES", "WIELDS", "WEARS", "OWNS"]:
+                item_ids.append(rel.to_entity_id)
+
+        if not item_ids:
+            return "Your inventory is empty."
+
+        lines = ["Inventory:", "-" * 40]
+
+        # Get full entity details for each item
+        backpack = []
+
+        for item_id in item_ids:
+            item = state.engine.dolt.get_entity(item_id, state.universe_id)
+            if item:
+                # Check if equipped (would need equipped flag in future)
+                # For now, just put everything in backpack
+                backpack.append(item)
+
+        if backpack:
+            lines.append(f"  Backpack ({len(backpack)} items):")
+            for item in backpack:
+                # Group same items
+                lines.append(f"    - {item.name}")
+                if item.description and len(item.description) < 80:
+                    lines.append(f"      {item.description}")
+        else:
+            lines.append("  Backpack: Empty")
+
+        return "\n".join(lines)
+
+    def _cmd_quests(self, state: GameState, args: list[str]) -> str | None:
+        """Handle quests command."""
+        if state.character_id is None or state.universe_id is None:
+            return "No character loaded."
+
+        quest_service = QuestService(state.engine.dolt, state.engine.neo4j)
+
+        # Handle subcommands
+        subcommand = args[0].lower() if args else "active"
+
+        if subcommand == "completed":
+            # Get completed quests - for now return empty since we need to filter by character
+            return (
+                "You haven't completed any quests yet.\n(Quest tracking by character coming soon)"
+            )
+
+        elif subcommand == "available":
+            # Get available quests at current location
+            quests = quest_service.get_available_quests(state.universe_id)
+            if not quests:
+                return "No quests available at this location."
+            lines = ["Available Quests:", "-" * 40]
+            for quest in quests:
+                lines.append(f"  [ ] {quest.name}")
+                if quest.description:
+                    lines.append(f"      {quest.description}")
+            return "\n".join(lines)
+
+        else:  # Default: show active quests
+            quests = quest_service.get_active_quests(state.universe_id)
+
+            if not quests:
+                return (
+                    "You have no active quests.\n\nTry '/quests available' to see available quests."
+                )
+
+            lines = ["Active Quests:", "-" * 40]
+            for quest in quests:
+                lines.append(f"  [!] {quest.name}")
+
+                # Show objectives
+                if quest.objectives:
+                    completed = sum(1 for obj in quest.objectives if obj.is_complete)
+                    total = len(quest.objectives)
+                    lines.append(f"      Progress: {completed}/{total} objectives")
+
+                    # Show first few objectives
+                    for obj in quest.objectives[:3]:
+                        status = "[x]" if obj.is_complete else "[ ]"
+                        lines.append(f"      {status} {obj.description}")
+
+                # Show rewards
+                if quest.rewards:
+                    reward_strs = []
+                    if quest.rewards.gold:
+                        reward_strs.append(f"{quest.rewards.gold} gold")
+                    if quest.rewards.item_ids:
+                        reward_strs.append("special item")
+                    if reward_strs:
+                        lines.append(f"      Reward: {', '.join(reward_strs)}")
+
+                lines.append("")  # Blank line between quests
+
+            lines.append("Type '/quests available' to see more quests.")
+            return "\n".join(lines)
+
+    def _cmd_talk(self, state: GameState, args: list[str]) -> str | None:
+        """Handle talk command."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        # Check if NPC name was provided
+        if not args:
+            # List NPCs at current location
+            npcs = self._get_npcs_at_location(state)
+
+            if not npcs:
+                return "There's nobody here to talk to."
+
+            npc_names = [name for _, name in npcs]
+            return (
+                "Who do you want to talk to?\n  "
+                + "\n  ".join(npc_names)
+                + "\n\nUsage: /talk <name>"
+            )
+
+        # Get NPC name from args
+        npc_name = " ".join(args)
+
+        # Find NPC at current location
+        npcs = self._get_npcs_at_location(state)
+
+        npc = None
+        for npc_id, name in npcs:
+            if name.lower() == npc_name.lower():
+                npc = state.engine.dolt.get_entity(npc_id, state.universe_id)
+                break
+
+        if not npc:
+            return f"I don't see '{npc_name}' here."
+
+        # Get NPC profile
+
+        npc_service = state.engine.npc_service  # Use the engine's npc_service
+        profile = npc_service.get_profile(npc.id)
+
+        if not profile:
+            return f"{npc.name} doesn't seem interested in talking right now."
+
+        # Generate greeting based on personality
+        greeting = self._generate_greeting(npc, profile)
+
+        # For now, return simple greeting (full conversation system would be more complex)
+        lines = [
+            f"You approach {npc.name}.",
+            "",
+            greeting,
+            "",
+            "(Conversation system coming soon - for now, NPCs just greet you!)",
+            "",
+            "Personality traits:",
+        ]
+
+        # Show personality
+        traits = profile.traits
+        lines.append(f"  Openness: {traits.openness}/100")
+        lines.append(f"  Conscientiousness: {traits.conscientiousness}/100")
+        lines.append(f"  Extraversion: {traits.extraversion}/100")
+        lines.append(f"  Agreeableness: {traits.agreeableness}/100")
+        lines.append(f"  Neuroticism: {traits.neuroticism}/100")
+
+        if profile.speech_style:
+            lines.append(f"\nSpeech style: {profile.speech_style}")
+
+        return "\n".join(lines)
+
+    def _generate_greeting(self, npc, profile) -> str:
+        """Generate a greeting based on NPC personality."""
+        traits = profile.traits
+
+        # High extraversion = enthusiastic greeting
+        if traits.extraversion > 70:
+            greetings = [
+                f'{npc.name} beams at you. "Well hello there! What can I do for you today?"',
+                f'{npc.name} waves energetically. "Great to see you! Pull up a chair!"',
+                f'{npc.name} calls out cheerfully. "Welcome, welcome! Always glad to see a new face!"',
+            ]
+        # Low extraversion = reserved greeting
+        elif traits.extraversion < 40:
+            greetings = [
+                f'{npc.name} nods quietly. "...Hello."',
+                f'{npc.name} glances up briefly. "Yes?"',
+                f'{npc.name} gives a slight acknowledgment. "What is it?"',
+            ]
+        # High agreeableness = warm greeting
+        elif traits.agreeableness > 70:
+            greetings = [
+                f'{npc.name} smiles warmly. "Hello, friend. How may I help you?"',
+                f'{npc.name} greets you kindly. "Good to see you. What brings you here?"',
+                f'{npc.name} looks up with a gentle expression. "Welcome. Please, come in."',
+            ]
+        # Default - neutral greeting
+        else:
+            greetings = [
+                f'{npc.name} looks at you. "Yes?"',
+                f'{npc.name} acknowledges your presence. "What do you need?"',
+                f'{npc.name} turns to face you. "You wanted something?"',
+            ]
+
+        return secrets.choice(greetings)
+
+    def _get_npcs_at_location(self, state: GameState) -> list[tuple[UUID, str]]:
+        """Get NPCs at current location.
+
+        Returns:
+            List of (entity_id, name) tuples
+        """
+        if state.location_id is None or state.universe_id is None:
+            return []
+
+        # Assign to local vars for type narrowing
+        location_id = state.location_id
+        universe_id = state.universe_id
+
+        entities_at_location = state.engine.neo4j.get_relationships(
+            location_id,
+            universe_id,
+            relationship_type="LOCATED_IN",
+        )
+
+        npcs = []
+        for rel in entities_at_location:
+            entity = state.engine.dolt.get_entity(rel.from_entity_id, universe_id)
+            if entity and entity.type == "character" and entity.id != state.character_id:
+                npcs.append((entity.id, entity.name))
+
+        return npcs
+
+    def _cmd_abilities(self, state: GameState, args: list[str]) -> str | None:
+        """Handle abilities command."""
+        if state.character_id is None or state.universe_id is None:
+            return "No character loaded."
+
+        # Get character entity
+        character = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if not character:
+            return "Character not found."
+
+        # For now, show a placeholder with explanation
+        # In the future, this will query actual abilities from the character
+        lines = [
+            "Abilities:",
+            "-" * 40,
+            "",
+            "(Ability system is implemented but your character doesn't have any abilities yet.)",
+            "",
+            "The ability system supports:",
+            "  • Martial techniques (weapon skills, combat maneuvers)",
+            "  • Spells (arcane, divine, primal magic)",
+            "  • Tech abilities (gadgets, hacking, systems)",
+            "",
+            "When abilities are added to your character, they'll appear here with:",
+            "  • Usage tracking (charges, spell slots, cooldowns)",
+            "  • Detailed descriptions",
+            "  • Targeting information",
+            "  • Usage via /use <ability name>",
+            "",
+        ]
+
+        # Show what resources the character has for abilities
+        if character.stats:
+            stats = character.stats
+            lines.append("Your resources:")
+
+            # Show level (determines proficiency bonus)
+            if stats.level:
+                prof_bonus = (stats.level - 1) // 4 + 2
+                lines.append(f"  Level: {stats.level} (Proficiency: +{prof_bonus})")
+
+            # Show ability modifiers that affect abilities
+            if stats.abilities:
+                lines.append("")
+                lines.append("  Ability Modifiers:")
+                for attr, val in stats.abilities.model_dump().items():
+                    mod = (val - 10) // 2
+                    sign = "+" if mod >= 0 else ""
+                    attr_name = attr.upper().ljust(3)  # Left-justify to 3 chars
+                    lines.append(f"    {attr_name}: {sign}{mod}")
+
+        lines.append("")
+        lines.append("Coming soon: Starter abilities will be added based on your character class!")
+
+        return "\n".join(lines)
+
     def _is_command(self, text: str) -> bool:
         """Check if input is a special command."""
         return text.startswith("/")
@@ -293,6 +622,12 @@ class GameREPL:
             return "No active session. Something went wrong."
 
         turn_result = await state.engine.process_turn(text, state.session_id)
+
+        # Sync GameState with session (location may have changed)
+        session = state.engine.get_session(state.session_id)
+        if session:
+            state.location_id = session.location_id
+
         return self._format_turn_result(turn_result)
 
     def _format_turn_result(self, result: TurnResult) -> str:

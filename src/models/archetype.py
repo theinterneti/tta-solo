@@ -124,7 +124,10 @@ DUELIST_FOCUS = Focus(
     archetype=Archetype.STRIKER,
     bonuses=[
         FocusBonus(
-            name="Riposte", description="+2 damage when only one enemy in melee", stat="damage", value=2
+            name="Riposte",
+            description="+2 damage when only one enemy in melee",
+            stat="damage",
+            value=2,
         ),
         FocusBonus(name="Parry", description="Reaction: reduce incoming melee damage by 1d6"),
     ],
@@ -146,7 +149,9 @@ ENCHANTER_FOCUS = Focus(
     description="Mind effects, charms",
     archetype=Archetype.CONTROLLER,
     bonuses=[
-        FocusBonus(name="Beguiling", description="+2 DC on charm effects", stat="charm_dc", value=2),
+        FocusBonus(
+            name="Beguiling", description="+2 DC on charm effects", stat="charm_dc", value=2
+        ),
         FocusBonus(name="Dominate", description="Charmed enemies can be commanded as bonus action"),
     ],
 )
@@ -177,7 +182,9 @@ BATTLE_PRIEST_FOCUS = Focus(
     description="Healing and buffs",
     archetype=Archetype.LEADER,
     bonuses=[
-        FocusBonus(name="Blessed Healer", description="+1d4 healing to all healing abilities", dice="1d4"),
+        FocusBonus(
+            name="Blessed Healer", description="+1d4 healing to all healing abilities", dice="1d4"
+        ),
         FocusBonus(name="Divine Shield", description="Grant temp HP equal to healing given"),
     ],
 )
@@ -188,7 +195,12 @@ TACTICIAN_FOCUS = Focus(
     archetype=Archetype.LEADER,
     bonuses=[
         FocusBonus(name="Commander", description="Grant ally free 5ft move as reaction"),
-        FocusBonus(name="Strategic Mind", description="+2 to initiative for all allies", stat="initiative", value=2),
+        FocusBonus(
+            name="Strategic Mind",
+            description="+2 to initiative for all allies",
+            stat="initiative",
+            value=2,
+        ),
     ],
 )
 
@@ -208,7 +220,9 @@ SCOUT_FOCUS = Focus(
     description="Reconnaissance, stealth",
     archetype=Archetype.SPECIALIST,
     bonuses=[
-        FocusBonus(name="Tracker", description="+5 to tracking and perception", stat="perception", value=5),
+        FocusBonus(
+            name="Tracker", description="+5 to tracking and perception", stat="perception", value=5
+        ),
         FocusBonus(name="Camouflage", description="Advantage on stealth in natural terrain"),
     ],
 )
@@ -218,8 +232,15 @@ FACE_FOCUS = Focus(
     description="Social manipulation",
     archetype=Archetype.SPECIALIST,
     bonuses=[
-        FocusBonus(name="Silver Tongue", description="+5 to persuasion and deception", stat="persuasion", value=5),
-        FocusBonus(name="Read Person", description="Insight check as free action once per conversation"),
+        FocusBonus(
+            name="Silver Tongue",
+            description="+5 to persuasion and deception",
+            stat="persuasion",
+            value=5,
+        ),
+        FocusBonus(
+            name="Read Person", description="Insight check as free action once per conversation"
+        ),
     ],
 )
 
@@ -229,7 +250,9 @@ ARTIFICER_FOCUS = Focus(
     archetype=Archetype.SPECIALIST,
     bonuses=[
         FocusBonus(name="Tinker", description="Create temporary gadgets during short rest"),
-        FocusBonus(name="Enhance", description="+1 to attacks with crafted items", stat="attack", value=1),
+        FocusBonus(
+            name="Enhance", description="+1 to attacks with crafted items", stat="attack", value=1
+        ),
     ],
 )
 
@@ -298,6 +321,7 @@ def get_paradigm_bonuses(paradigm: Paradigm) -> dict[str, int]:
 # =============================================================================
 # Class Generation
 # =============================================================================
+
 
 def generate_class(
     archetype: Archetype | None = None,

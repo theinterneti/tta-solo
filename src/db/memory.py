@@ -528,3 +528,21 @@ class InMemoryNeo4jRepository:
     def delete_memory(self, memory_id: UUID) -> None:
         """Delete a memory."""
         self._memories.pop(memory_id, None)
+
+    def get_owned_items(self, character_id: UUID) -> list[Entity]:
+        """Get all items owned by a character via OWNS or CARRIES relationships."""
+        raise NotImplementedError(
+            "InMemoryNeo4jRepository.get_owned_items requires access to the Dolt "
+            "entity store and is not implemented for the in-memory test repository. "
+            "Use get_relationships() with CARRIES/OWNS relationship types instead."
+        )
+
+    def get_entities_at_location(
+        self, location_id: UUID, universe_id: UUID, entity_type: str | None = None
+    ) -> list[Entity]:
+        """Get all entities at a specific location via LOCATED_IN relationships."""
+        raise NotImplementedError(
+            "InMemoryNeo4jRepository.get_entities_at_location requires access to the "
+            "Dolt entity store and is not implemented for the in-memory test "
+            "repository. Use get_relationships() with LOCATED_IN relationship type instead."
+        )
