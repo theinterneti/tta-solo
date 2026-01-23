@@ -289,7 +289,6 @@ class GameREPL:
         lines = ["Inventory:", "-" * 40]
 
         # Get full entity details for each item
-        equipped = []
         backpack = []
         
         for item_id in item_ids:
@@ -351,23 +350,22 @@ class GameREPL:
 
                 # Show objectives
                 if quest.objectives:
-                    completed = sum(1 for obj in quest.objectives if obj.completed)
+                    completed = sum(1 for obj in quest.objectives if obj.is_complete)
                     total = len(quest.objectives)
                     lines.append(f"      Progress: {completed}/{total} objectives")
 
                     # Show first few objectives
                     for i, obj in enumerate(quest.objectives[:3]):
-                        status = "[x]" if obj.completed else "[ ]"
+                        status = "[x]" if obj.is_complete else "[ ]"
                         lines.append(f"      {status} {obj.description}")
 
                 # Show rewards
                 if quest.rewards:
                     reward_strs = []
-                    for reward in quest.rewards:
-                        if reward.gold:
-                            reward_strs.append(f"{reward.gold} gold")
-                        if reward.item_id:
-                            reward_strs.append("special item")
+                    if quest.rewards.gold:
+                        reward_strs.append(f"{quest.rewards.gold} gold")
+                    if quest.rewards.item_ids:
+                        reward_strs.append("special item")
                     if reward_strs:
                         lines.append(f"      Reward: {', '.join(reward_strs)}")
 
@@ -384,38 +382,24 @@ class GameREPL:
         # Check if NPC name was provided
         if not args:
             # List NPCs at current location
-            entities_at_location = state.engine.neo4j.get_relationships(
-                state.location_id,
-                state.universe_id,
-                relationship_type="LOCATED_IN",
-            )
-            
-            npcs = []
-            for rel in entities_at_location:
-                entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
-                if entity and entity.type == "character" and entity.id != state.character_id:
-                    npcs.append(entity.name)
+            npcs = self._get_npcs_at_location(state)
             
             if not npcs:
                 return "There's nobody here to talk to."
             
-            return f"Who do you want to talk to?\n  " + "\n  ".join(npcs) + "\n\nUsage: /talk <name>"
+            npc_names = [name for _, name in npcs]
+            return f"Who do you want to talk to?\n  " + "\n  ".join(npc_names) + "\n\nUsage: /talk <name>"
 
         # Get NPC name from args
         npc_name = " ".join(args)
         
         # Find NPC at current location
-        entities_at_location = state.engine.neo4j.get_relationships(
-            state.location_id,
-            state.universe_id,
-            relationship_type="LOCATED_IN",
-        )
+        npcs = self._get_npcs_at_location(state)
         
         npc = None
-        for rel in entities_at_location:
-            entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
-            if entity and entity.type == "character" and entity.name.lower() == npc_name.lower():
-                npc = entity
+        for npc_id, name in npcs:
+            if name.lower() == npc_name.lower():
+                npc = state.engine.dolt.get_entity(npc_id, state.universe_id)
                 break
         
         if not npc:
@@ -492,6 +476,26 @@ class GameREPL:
         
         import secrets
         return secrets.choice(greetings)
+
+    def _get_npcs_at_location(self, state: GameState) -> list[tuple[UUID, str]]:
+        """Get NPCs at current location.
+        
+        Returns:
+            List of (entity_id, name) tuples
+        """
+        entities_at_location = state.engine.neo4j.get_relationships(
+            state.location_id,
+            state.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+        
+        npcs = []
+        for rel in entities_at_location:
+            entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
+            if entity and entity.type == "character" and entity.id != state.character_id:
+                npcs.append((entity.id, entity.name))
+        
+        return npcs
 
     def _cmd_abilities(self, state: GameState, args: list[str]) -> str | None:
         """Handle abilities command."""

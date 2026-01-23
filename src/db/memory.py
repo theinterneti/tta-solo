@@ -531,32 +531,18 @@ class InMemoryNeo4jRepository:
 
     def get_owned_items(self, character_id: UUID) -> list[Entity]:
         """Get all items owned by a character via OWNS or CARRIES relationships."""
-        items = []
-        
-        # Find all CARRIES or OWNS relationships from this character
-        for rel in self._relationships.values():
-            if rel.from_entity_id == character_id and rel.relationship_type.value in ["CARRIES", "OWNS", "WIELDS", "WEARS"]:
-                # Look up the item entity in Dolt
-                # This is a cross-repo query - in reality would need Dolt reference
-                # For now, return empty as we'd need the Dolt repo to fetch entities
-                pass
-        
-        return items
+        raise NotImplementedError(
+            "InMemoryNeo4jRepository.get_owned_items requires access to the Dolt "
+            "entity store and is not implemented for the in-memory test repository. "
+            "Use get_relationships() with CARRIES/OWNS relationship types instead."
+        )
 
     def get_entities_at_location(
         self, location_id: UUID, universe_id: UUID, entity_type: str | None = None
     ) -> list[Entity]:
         """Get all entities at a specific location via LOCATED_IN relationships."""
-        entity_ids = []
-        
-        # Find all LOCATED_IN relationships pointing to this location
-        for rel in self._relationships.values():
-            if (
-                rel.to_entity_id == location_id
-                and rel.universe_id == universe_id
-                and rel.relationship_type.value == "LOCATED_IN"
-            ):
-                entity_ids.append(rel.from_entity_id)
-        
-        # Would need to fetch entities from Dolt - return empty for now
-        return []
+        raise NotImplementedError(
+            "InMemoryNeo4jRepository.get_entities_at_location requires access to the "
+            "Dolt entity store and is not implemented for the in-memory test "
+            "repository. Use get_relationships() with LOCATED_IN relationship type instead."
+        )
