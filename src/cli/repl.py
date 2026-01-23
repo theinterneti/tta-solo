@@ -491,6 +491,9 @@ class GameREPL:
         Returns:
             List of (entity_id, name) tuples
         """
+        if state.location_id is None or state.universe_id is None:
+            return []
+        
         entities_at_location = state.engine.neo4j.get_relationships(
             state.location_id,
             state.universe_id,
