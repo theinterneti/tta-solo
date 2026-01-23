@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
@@ -17,6 +16,8 @@ from src.content import create_starter_world
 from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import GameEngine
 from src.engine.models import EngineConfig, TurnResult
+from src.models.conversation import ConversationContext, DialogueOptions
+from src.services.conversation import ConversationService
 from src.services.npc import NPCService
 from src.services.quest import QuestService
 
@@ -32,6 +33,8 @@ class GameState:
     location_id: UUID | None = None
     character_name: str = "Hero"
     running: bool = True
+    conversation: ConversationContext | None = None
+    """Active conversation if in conversation mode."""
 
 
 @dataclass
@@ -62,6 +65,7 @@ class GameREPL:
         self.verbosity = verbosity
         self.use_agents = use_agents
         self.commands: dict[str, Command] = {}
+        self.conversation_service: ConversationService | None = None
         self._register_commands()
 
     def _register_commands(self) -> None:
@@ -406,9 +410,13 @@ class GameREPL:
             return "\n".join(lines)
 
     def _cmd_talk(self, state: GameState, args: list[str]) -> str | None:
-        """Handle talk command."""
+        """Handle talk command - starts a conversation with an NPC."""
         if state.character_id is None or state.universe_id is None or state.location_id is None:
             return "No active session."
+
+        # Check if already in conversation
+        if state.conversation is not None:
+            return f"You're already talking to {state.conversation.npc_name}. Type [0] to end that conversation first."
 
         # Check if NPC name was provided
         if not args:
@@ -428,87 +436,47 @@ class GameREPL:
         # Get NPC name from args
         npc_name = " ".join(args)
 
-        # Find NPC at current location
+        # Find NPC at current location (partial match)
         npcs = self._get_npcs_at_location(state)
 
         npc = None
         for npc_id, name in npcs:
-            if name.lower() == npc_name.lower():
+            if npc_name.lower() in name.lower():
                 npc = state.engine.dolt.get_entity(npc_id, state.universe_id)
                 break
 
         if not npc:
             return f"I don't see '{npc_name}' here."
 
-        # Get NPC profile
+        # Return None to let async handler take over
+        # Store the NPC info for the async handler
+        state._pending_talk_npc = npc  # type: ignore[attr-defined]
+        return None
 
-        npc_service = state.engine.npc_service  # Use the engine's npc_service
-        profile = npc_service.get_profile(npc.id)
+    async def _start_conversation(self, state: GameState, npc) -> str:
+        """Start a conversation with an NPC (async version)."""
+        if (
+            self.conversation_service is None
+            or state.character_id is None
+            or state.universe_id is None
+            or state.location_id is None
+        ):
+            return "Conversation service not available."
 
-        if not profile:
-            return f"{npc.name} doesn't seem interested in talking right now."
+        # Start conversation
+        context, greeting, options = await self.conversation_service.start_conversation(
+            npc_id=npc.id,
+            npc_name=npc.name,
+            player_id=state.character_id,
+            universe_id=state.universe_id,
+            location_id=state.location_id,
+        )
 
-        # Generate greeting based on personality
-        greeting = self._generate_greeting(npc, profile)
+        # Store conversation context
+        state.conversation = context
 
-        # For now, return simple greeting (full conversation system would be more complex)
-        lines = [
-            f"You approach {npc.name}.",
-            "",
-            greeting,
-            "",
-            "(Conversation system coming soon - for now, NPCs just greet you!)",
-            "",
-            "Personality traits:",
-        ]
-
-        # Show personality
-        traits = profile.traits
-        lines.append(f"  Openness: {traits.openness}/100")
-        lines.append(f"  Conscientiousness: {traits.conscientiousness}/100")
-        lines.append(f"  Extraversion: {traits.extraversion}/100")
-        lines.append(f"  Agreeableness: {traits.agreeableness}/100")
-        lines.append(f"  Neuroticism: {traits.neuroticism}/100")
-
-        if profile.speech_style:
-            lines.append(f"\nSpeech style: {profile.speech_style}")
-
-        return "\n".join(lines)
-
-    def _generate_greeting(self, npc, profile) -> str:
-        """Generate a greeting based on NPC personality."""
-        traits = profile.traits
-
-        # High extraversion = enthusiastic greeting
-        if traits.extraversion > 70:
-            greetings = [
-                f'{npc.name} beams at you. "Well hello there! What can I do for you today?"',
-                f'{npc.name} waves energetically. "Great to see you! Pull up a chair!"',
-                f'{npc.name} calls out cheerfully. "Welcome, welcome! Always glad to see a new face!"',
-            ]
-        # Low extraversion = reserved greeting
-        elif traits.extraversion < 40:
-            greetings = [
-                f'{npc.name} nods quietly. "...Hello."',
-                f'{npc.name} glances up briefly. "Yes?"',
-                f'{npc.name} gives a slight acknowledgment. "What is it?"',
-            ]
-        # High agreeableness = warm greeting
-        elif traits.agreeableness > 70:
-            greetings = [
-                f'{npc.name} smiles warmly. "Hello, friend. How may I help you?"',
-                f'{npc.name} greets you kindly. "Good to see you. What brings you here?"',
-                f'{npc.name} looks up with a gentle expression. "Welcome. Please, come in."',
-            ]
-        # Default - neutral greeting
-        else:
-            greetings = [
-                f'{npc.name} looks at you. "Yes?"',
-                f'{npc.name} acknowledges your presence. "What do you need?"',
-                f'{npc.name} turns to face you. "You wanted something?"',
-            ]
-
-        return secrets.choice(greetings)
+        # Format and return
+        return self._format_conversation(npc.name, greeting, options)
 
     def _get_npcs_at_location(self, state: GameState) -> list[tuple[UUID, str]]:
         """Get NPCs at current location.
@@ -536,6 +504,63 @@ class GameREPL:
                 npcs.append((entity.id, entity.name))
 
         return npcs
+
+    def _format_conversation(
+        self,
+        npc_name: str,
+        response: str,
+        options: DialogueOptions | None,
+    ) -> str:
+        """Format conversation for display."""
+        lines = [
+            f"{npc_name}:",
+            f'  "{response}"',
+            "",
+        ]
+
+        if options:
+            lines.append("What do you say?")
+            for choice in options.choices:
+                lines.append(f"  [{choice.id}] {choice.label}")
+            if options.allows_custom_input:
+                lines.append("  [*] Say something else...")
+            lines.append("  [0] End conversation")
+
+        return "\n".join(lines)
+
+    async def _process_conversation_input(
+        self,
+        text: str,
+        state: GameState,
+    ) -> str:
+        """Process input while in conversation mode."""
+        if state.conversation is None or self.conversation_service is None:
+            return "No active conversation."
+
+        context = state.conversation
+
+        # Handle exit
+        if text == "0" or text.lower() in ["bye", "goodbye", "leave", "exit"]:
+            farewell = self.conversation_service.end_conversation(context)
+            state.conversation = None
+            return f'\n{context.npc_name}:\n  "{farewell}"\n\nYou end your conversation with {context.npc_name}.'
+
+        # Handle choice selection or custom input
+        if text.isdigit():
+            player_choice: int | str = int(text)
+        else:
+            player_choice = text
+
+        response, options = await self.conversation_service.continue_conversation(
+            context, player_choice
+        )
+
+        # Check if conversation ended
+        if options is None:
+            state.conversation = None
+            return f'\n{context.npc_name}:\n  "{response}"\n\nYou end your conversation with {context.npc_name}.'
+
+        return self._format_conversation(context.npc_name, response, options)
 
     def _cmd_abilities(self, state: GameState, args: list[str]) -> str | None:
         """Handle abilities command."""
@@ -825,6 +850,10 @@ class GameREPL:
         if not text:
             return ""
 
+        # Check if in conversation mode
+        if state.conversation is not None:
+            return await self._process_conversation_input(text, state)
+
         # Handle special commands
         if self._is_command(text):
             cmd_name, args = self._parse_command(text)
@@ -832,6 +861,11 @@ class GameREPL:
                 result = self.commands[cmd_name].handler(state, args)
                 if result is not None:
                     return result
+                # Check if talk command wants to start a conversation
+                if cmd_name == "talk" and hasattr(state, "_pending_talk_npc"):
+                    npc = state._pending_talk_npc  # type: ignore[attr-defined]
+                    delattr(state, "_pending_talk_npc")
+                    return await self._start_conversation(state, npc)
                 # Fall through to engine processing
                 # Preserve arguments for commands like /fork that need them
                 text = f"{cmd_name} {' '.join(args)}" if args else cmd_name
@@ -951,6 +985,14 @@ class GameREPL:
             use_agents=self.use_agents,
         )
 
+        # Initialize conversation service
+        self.conversation_service = ConversationService(
+            dolt=dolt,
+            neo4j=neo4j,
+            npc_service=engine.npc_service,
+            llm=None,  # LLM integration can be added via set_llm_service
+        )
+
         # Create game state
         state = GameState(
             engine=engine,
@@ -982,7 +1024,13 @@ class GameREPL:
         # Main loop
         while state.running:
             try:
-                user_input = input("> ").strip()
+                # Show different prompt when in conversation
+                if state.conversation is not None:
+                    prompt = f"[talking to {state.conversation.npc_name}] > "
+                else:
+                    prompt = "> "
+
+                user_input = input(prompt).strip()
 
                 if not user_input:
                     continue
