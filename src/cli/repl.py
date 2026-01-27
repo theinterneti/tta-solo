@@ -158,6 +158,18 @@ class GameREPL:
                 description="Sell an item from your inventory",
                 handler=self._cmd_sell,
             ),
+            Command(
+                name="go",
+                aliases=["travel", "move"],
+                description="Travel to a connected location",
+                handler=self._cmd_go,
+            ),
+            Command(
+                name="exits",
+                aliases=["ex", "doors"],
+                description="Show available exits",
+                handler=self._cmd_exits,
+            ),
         ]
 
         for cmd in commands:
@@ -834,6 +846,135 @@ class GameREPL:
             parts.append(f"{cp}cp")
 
         return " ".join(parts)
+
+    def _cmd_go(self, state: GameState, args: list[str]) -> str | None:
+        """Handle go command - travel to a connected location."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        if not args:
+            # Show available exits as help
+            exits = self._get_location_exits(state)
+            if not exits:
+                return "There are no obvious exits from here."
+            exit_list = ", ".join(exits.keys())
+            return f"Where do you want to go?\n\nAvailable exits: {exit_list}\n\nUsage: /go <destination>"
+
+        destination = " ".join(args).lower()
+
+        # Get available exits
+        exits = self._get_location_exits(state)
+
+        if not exits:
+            return "There are no exits from this location."
+
+        # Try to match destination
+        matched_exit = self._match_exit(destination, exits)
+
+        if not matched_exit:
+            exit_list = ", ".join(exits.keys())
+            return f"Can't go '{destination}'.\n\nAvailable exits: {exit_list}"
+
+        # Get destination info
+        dest_id = exits[matched_exit]["id"]
+        dest_name = exits[matched_exit]["name"]
+
+        # Update session location
+        session = state.engine.get_session(state.session_id) if state.session_id else None
+        if session:
+            session.location_id = dest_id
+
+        # Update state
+        state.location_id = dest_id
+
+        # Update player entity location
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if player:
+            player.current_location_id = dest_id
+            state.engine.dolt.save_entity(player)
+
+        return f"You travel to {dest_name}.\n\nType /look to see your surroundings."
+
+    def _cmd_exits(self, state: GameState, args: list[str]) -> str | None:
+        """Handle exits command - show available exits."""
+        if state.location_id is None or state.universe_id is None:
+            return "No active session."
+
+        exits = self._get_location_exits(state)
+
+        if not exits:
+            return "There are no obvious exits from here."
+
+        lines = ["Available exits:", "-" * 30]
+        for direction, info in exits.items():
+            lines.append(f"  {direction} -> {info['name']}")
+
+        lines.append("")
+        lines.append("Use /go <exit> to travel.")
+
+        return "\n".join(lines)
+
+    def _get_location_exits(self, state: GameState) -> dict[str, dict]:
+        """Get available exits from current location.
+
+        Returns:
+            Dict of exit_name -> {"id": UUID, "name": str}
+        """
+        if state.location_id is None or state.universe_id is None:
+            return {}
+
+        exits = {}
+        connected_rels = state.engine.neo4j.get_relationships(
+            state.location_id,
+            state.universe_id,
+            relationship_type="CONNECTED_TO",
+        )
+
+        for rel in connected_rels:
+            # Only use outgoing connections (from current location)
+            if rel.from_entity_id != state.location_id:
+                continue
+
+            connected_location = state.engine.dolt.get_entity(rel.to_entity_id, state.universe_id)
+            if connected_location:
+                # Use description as exit name if available, otherwise location name
+                exit_name = rel.description if rel.description else connected_location.name
+                exits[exit_name.lower()] = {
+                    "id": rel.to_entity_id,
+                    "name": connected_location.name,
+                }
+
+        return exits
+
+    def _match_exit(self, destination: str, exits: dict[str, dict]) -> str | None:
+        """Match destination to an available exit (case-insensitive, partial match).
+
+        Returns:
+            Matched exit key or None if no match.
+        """
+        destination = destination.lower()
+
+        # Try exact match first
+        if destination in exits:
+            return destination
+
+        # Try partial match on exit name
+        matches = []
+        for exit_name in exits:
+            if destination in exit_name or exit_name in destination:
+                matches.append(exit_name)
+
+        # Also check against destination names
+        for exit_name, info in exits.items():
+            dest_name = info["name"].lower()
+            if (destination in dest_name or dest_name in destination) and exit_name not in matches:
+                matches.append(exit_name)
+
+        # Return if exactly one match
+        if len(matches) == 1:
+            return matches[0]
+
+        return None
 
     def _is_command(self, text: str) -> bool:
         """Check if input is a special command."""
