@@ -205,6 +205,28 @@ class TestNavigationHelpers:
         assert repl._match_exit("west", exits) is None
         assert repl._match_exit("castle", exits) is None
 
+    def test_match_exit_ambiguous(self, test_world):
+        """_match_exit should return None for ambiguous matches."""
+        from src.cli.repl import GameREPL
+
+        repl = GameREPL()
+
+        # Both exits start with "north" - typing "north" is ambiguous
+        exits = {
+            "north": {"id": test_world["market"].id, "name": "Market Square"},
+            "northeast": {"id": test_world["gate"].id, "name": "Town Gate"},
+        }
+
+        # "n" matches both "north" and "northeast" (prefix match) - ambiguous
+        assert repl._match_exit("n", exits) is None
+
+        # But exact match should still work
+        assert repl._match_exit("north", exits) == "north"
+        assert repl._match_exit("northeast", exits) == "northeast"
+
+        # "northe" only matches "northeast" (prefix) - not ambiguous
+        assert repl._match_exit("northe", exits) == "northeast"
+
 
 class TestGoCommand:
     """Tests for /go command."""
@@ -301,6 +323,24 @@ class TestGoCommand:
 
         assert "Market Square" in result
         assert state.location_id == test_world["market"].id
+
+        # Verify Dolt entity was updated
+        updated_player = test_world["dolt"].get_entity(
+            test_world["player"].id, test_world["universe"].id
+        )
+        assert updated_player.current_location_id == test_world["market"].id
+
+        # Verify Neo4j LOCATED_IN relationship was updated
+        located_in_rels = test_world["neo4j"].get_relationships(
+            test_world["player"].id,
+            test_world["universe"].id,
+            relationship_type="LOCATED_IN",
+        )
+        # Should have a relationship to the new location
+        new_location_rels = [
+            r for r in located_in_rels if r.to_entity_id == test_world["market"].id
+        ]
+        assert len(new_location_rels) == 1
 
 
 class TestExitsCommand:

@@ -54,17 +54,27 @@ def _cmd_go(self, state: GameState, args: list[str]) -> str | None:
 
     destination = " ".join(args).lower()
 
-    # Get current exits
-    exits = await self._get_current_exits(state)
+    # Get current exits (sync - uses direct DB lookups)
+    exits = self._get_location_exits(state)
 
-    # Try exact match first, then partial
+    # Try exact match first, then prefix match
     matched_exit = self._match_exit(destination, exits)
 
     if matched_exit:
-        # Update location
         new_location_id = exits[matched_exit]["id"]
+        old_location_id = state.location_id
+
+        # Update state and session
         state.location_id = new_location_id
         session.location_id = new_location_id
+
+        # Update Dolt (truth)
+        player.current_location_id = new_location_id
+        dolt.save_entity(player)
+
+        # Update Neo4j (context) - maintain LOCATED_IN relationship
+        neo4j.delete_relationship(old_located_in_rel)
+        neo4j.create_relationship(new_located_in_rel)
 
         return f"You travel to {exits[matched_exit]['name']}."
     else:
@@ -77,7 +87,7 @@ def _cmd_go(self, state: GameState, args: list[str]) -> str | None:
 ```python
 def _cmd_exits(self, state: GameState, args: list[str]) -> str | None:
     """Show available exits."""
-    exits = await self._get_current_exits(state)
+    exits = self._get_location_exits(state)
 
     if not exits:
         return "There are no obvious exits."
@@ -91,10 +101,27 @@ def _cmd_exits(self, state: GameState, args: list[str]) -> str | None:
 
 ## Exit Matching
 
-Partial matching for convenience:
-- "market" matches "Market Square"
-- "rusty" matches "Rusty Dragon Inn"
-- "n" matches "north" (if only one n-exit)
+Prefix matching for convenience and disambiguation:
+- "market" matches "Market Square" (prefix of location name)
+- "n" matches "north" (if only one n-prefixed exit)
+- "north" does NOT match "northeast" (avoids ambiguity)
+
+If multiple exits match the prefix, returns None (ambiguous).
+
+## Data Consistency (Dual-State)
+
+Per the project's architecture, location changes must update both databases:
+
+### Dolt (Truth)
+- `player.current_location_id` - Player entity's location field
+- Persisted via `dolt.save_entity(player)`
+
+### Neo4j (Context)
+- `LOCATED_IN` relationship - Tracks where entities are located
+- Remove old: `neo4j.delete_relationship(old_rel)`
+- Create new: `neo4j.create_relationship(Relationship(type=LOCATED_IN, ...))`
+
+This mirrors the movement handling in `src/engine/game.py` lines 508-529.
 
 ## Error Handling
 

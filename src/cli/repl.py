@@ -10,6 +10,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TypedDict
 from uuid import UUID
 
 from src.content import create_starter_world
@@ -18,9 +19,17 @@ from src.engine import GameEngine
 from src.engine.models import EngineConfig, TurnResult
 from src.models.conversation import ConversationContext, DialogueOptions
 from src.models.entity import Entity
+from src.models.relationships import Relationship, RelationshipType
 from src.services.conversation import ConversationService
 from src.services.npc import NPCService
 from src.services.quest import QuestService
+
+
+class ExitInfo(TypedDict):
+    """Information about a location exit."""
+
+    id: UUID
+    name: str
 
 
 @dataclass
@@ -858,7 +867,11 @@ class GameREPL:
             if not exits:
                 return "There are no obvious exits from here."
             exit_list = ", ".join(exits.keys())
-            return f"Where do you want to go?\n\nAvailable exits: {exit_list}\n\nUsage: /go <destination>"
+            return (
+                f"Where do you want to go?\n\n"
+                f"Available exits: {exit_list}\n\n"
+                f"Usage: /go <destination>"
+            )
 
         destination = " ".join(args).lower()
 
@@ -878,6 +891,7 @@ class GameREPL:
         # Get destination info
         dest_id = exits[matched_exit]["id"]
         dest_name = exits[matched_exit]["name"]
+        old_location_id = state.location_id
 
         # Update session location
         session = state.engine.get_session(state.session_id) if state.session_id else None
@@ -887,11 +901,32 @@ class GameREPL:
         # Update state
         state.location_id = dest_id
 
-        # Update player entity location
+        # Update player entity location in Dolt
         player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
         if player:
             player.current_location_id = dest_id
             state.engine.dolt.save_entity(player)
+
+        # Update LOCATED_IN relationship in Neo4j for data consistency
+        # Remove old relationship
+        old_rels = state.engine.neo4j.get_relationships(
+            state.character_id,
+            state.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+        for rel in old_rels:
+            if rel.to_entity_id == old_location_id:
+                state.engine.neo4j.delete_relationship(rel.id)
+
+        # Create new relationship
+        state.engine.neo4j.create_relationship(
+            Relationship(
+                universe_id=state.universe_id,
+                from_entity_id=state.character_id,
+                to_entity_id=dest_id,
+                relationship_type=RelationshipType.LOCATED_IN,
+            )
+        )
 
         return f"You travel to {dest_name}.\n\nType /look to see your surroundings."
 
@@ -914,16 +949,16 @@ class GameREPL:
 
         return "\n".join(lines)
 
-    def _get_location_exits(self, state: GameState) -> dict[str, dict]:
+    def _get_location_exits(self, state: GameState) -> dict[str, ExitInfo]:
         """Get available exits from current location.
 
         Returns:
-            Dict of exit_name -> {"id": UUID, "name": str}
+            Dict of exit_name -> ExitInfo with id and name.
         """
         if state.location_id is None or state.universe_id is None:
             return {}
 
-        exits = {}
+        exits: dict[str, ExitInfo] = {}
         connected_rels = state.engine.neo4j.get_relationships(
             state.location_id,
             state.universe_id,
@@ -946,11 +981,13 @@ class GameREPL:
 
         return exits
 
-    def _match_exit(self, destination: str, exits: dict[str, dict]) -> str | None:
-        """Match destination to an available exit (case-insensitive, partial match).
+    def _match_exit(self, destination: str, exits: dict[str, ExitInfo]) -> str | None:
+        """Match destination to an available exit (case-insensitive, prefix match).
+
+        Uses prefix matching to avoid ambiguity (e.g., "north" won't match "northeast").
 
         Returns:
-            Matched exit key or None if no match.
+            Matched exit key or None if no match or ambiguous.
         """
         destination = destination.lower()
 
@@ -958,16 +995,16 @@ class GameREPL:
         if destination in exits:
             return destination
 
-        # Try partial match on exit name
+        # Try prefix match on exit name
         matches = []
         for exit_name in exits:
-            if destination in exit_name or exit_name in destination:
+            if exit_name.startswith(destination):
                 matches.append(exit_name)
 
-        # Also check against destination names
+        # Also check against destination location names using prefix matching
         for exit_name, info in exits.items():
             dest_name = info["name"].lower()
-            if (destination in dest_name or dest_name in destination) and exit_name not in matches:
+            if dest_name.startswith(destination) and exit_name not in matches:
                 matches.append(exit_name)
 
         # Return if exactly one match
