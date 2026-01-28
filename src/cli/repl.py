@@ -447,8 +447,10 @@ class GameREPL:
                     lines.append(f'  "{preview}"')
 
                 # OOC: Command hint
-                # Simplified quest name for command (lowercase, no special chars)
-                simple_name = quest.name.lower().split()[0]
+                # Create a simple slug from quest name (avoid articles)
+                words = quest.name.lower().split()
+                # Skip common articles
+                simple_name = next((w for w in words if w not in ("a", "an", "the")), words[0])
                 lines.append(f"  → /quest accept {simple_name}")
                 lines.append("")
 

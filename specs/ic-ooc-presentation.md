@@ -168,7 +168,7 @@ During combat, be brief but stay IC:
 ```
 You strike down the goblin raider!
 
-[Quest: Goblin Trouble - 3/3 complete]
+[Quest: Goblin Trouble - 3 of 3 goblins defeated (quest complete)]
 ```
 
 ### Conversation
