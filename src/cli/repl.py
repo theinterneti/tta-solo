@@ -29,10 +29,11 @@ from src.models.ability import (
 from src.models.conversation import ConversationContext, DialogueOptions
 from src.models.entity import Entity
 from src.models.relationships import Relationship, RelationshipType
-from src.models.resources import EntityResources, StressMomentumPool
+from src.models.resources import CooldownTracker, EntityResources, StressMomentumPool
 from src.services.conversation import ConversationService
 from src.services.npc import NPCService
 from src.services.quest import QuestService
+from src.skills.dice import roll_dice
 
 
 class ExitInfo(TypedDict):
@@ -610,8 +611,6 @@ class GameREPL:
 
         return self._format_conversation(context.npc_name, response, options)
 
-
-
     def _cmd_shop(self, state: GameState, args: list[str]) -> str | None:
         """Handle shop/buy command - browse and purchase items from merchants."""
         if state.character_id is None or state.universe_id is None or state.location_id is None:
@@ -1084,7 +1083,7 @@ class GameREPL:
         details = ability.mechanism_details
 
         if mechanism == MechanismType.SLOTS:
-            level = details.get("slot_level", 1)
+            level = details.get("level", 1)
             if not resources.has_spell_slot(level):
                 return f"Not enough spell slots. You need a level {level} slot."
             resources.use_spell_slot(level)
@@ -1092,8 +1091,15 @@ class GameREPL:
         elif mechanism == MechanismType.COOLDOWN:
             cooldown = resources.get_cooldown(ability.name)
             if cooldown is None:
-                # Create a cooldown tracker if not exists
-                pass  # Allow use
+                # Create cooldown tracker from ability details
+                max_uses = details.get("max_uses", 1)
+                recharge = details.get("recharge_on_rest", "long")
+                from src.models.resources import CooldownTracker
+
+                cooldown = CooldownTracker(
+                    max_uses=max_uses, current_uses=max_uses, recharge_on_rest=recharge
+                )
+                resources.cooldowns[ability.name] = cooldown
             elif not cooldown.has_uses():
                 return f"{ability.name} is on cooldown."
             else:
@@ -1123,9 +1129,12 @@ class GameREPL:
         """Resolve target for ability."""
         if target_name is None:
             # Self-targeting abilities don't need explicit target
-            if ability.targeting.type == TargetingType.SELF:
-                if state.character_id and state.universe_id:
-                    return state.engine.dolt.get_entity(state.character_id, state.universe_id)
+            if (
+                ability.targeting.type == TargetingType.SELF
+                and state.character_id
+                and state.universe_id
+            ):
+                return state.engine.dolt.get_entity(state.character_id, state.universe_id)
             return None
 
         target_lower = target_name.lower()
@@ -1188,9 +1197,7 @@ class GameREPL:
             # Apply healing to self or target
             heal_target = target
             if not heal_target and state.character_id and state.universe_id:
-                heal_target = state.engine.dolt.get_entity(
-                    state.character_id, state.universe_id
-                )
+                heal_target = state.engine.dolt.get_entity(state.character_id, state.universe_id)
             if heal_target and heal_target.stats:
                 old_hp = heal_target.stats.hp_current
                 heal_target.stats.hp_current = min(
@@ -1211,20 +1218,8 @@ class GameREPL:
 
     def _roll_dice(self, dice_str: str) -> int:
         """Roll dice from a string like '2d6' or '1d10+5'."""
-        import random
-        import re
-
-        # Parse dice string: NdM or NdM+X
-        match = re.match(r"(\d+)d(\d+)(?:\+(\d+))?", dice_str)
-        if not match:
-            return 0
-
-        num_dice = int(match.group(1))
-        die_size = int(match.group(2))
-        bonus = int(match.group(3)) if match.group(3) else 0
-
-        total = sum(random.randint(1, die_size) for _ in range(num_dice))
-        return total + bonus
+        result = roll_dice(dice_str)
+        return result.total
 
     def _format_ability_cost(self, ability: Ability) -> str:
         """Format ability cost for display."""
@@ -1234,7 +1229,7 @@ class GameREPL:
         if mechanism == MechanismType.FREE:
             return "Free"
         elif mechanism == MechanismType.SLOTS:
-            level = details.get("slot_level", 1)
+            level = details.get("level", 1)
             return f"Level {level} spell slot"
         elif mechanism == MechanismType.COOLDOWN:
             max_uses = details.get("max_uses", 1)
@@ -1293,8 +1288,6 @@ class GameREPL:
         )
 
         # Create resources with abilities and a stress/momentum pool
-        from src.models.resources import CooldownTracker
-
         resources = EntityResources(
             abilities=[second_wind, power_strike],
             stress_momentum=StressMomentumPool(),

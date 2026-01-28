@@ -44,14 +44,14 @@ class EntityResources(BaseModel):
     )
 
     def get_ability(self, name: str) -> Ability | None:
-        """Look up ability by name (case-insensitive, partial match)."""
+        """Look up ability by name (case-insensitive, prefix match)."""
         name_lower = name.lower()
         for ability in self.abilities:
             if ability.name.lower() == name_lower:
                 return ability
-        # Try partial match
+        # Try prefix match
         for ability in self.abilities:
-            if name_lower in ability.name.lower():
+            if ability.name.lower().startswith(name_lower):
                 return ability
         return None
 ```
@@ -185,7 +185,7 @@ STARTER_ABILITIES = [
     create_martial_technique(
         name="Second Wind",
         description="You have a limited well of stamina. Heal 1d10 + your level.",
-        healing=HealingEffect(dice="1d10", flat_bonus=1),
+        healing=HealingEffect(dice="1d10", flat_amount=1),
         targeting=Targeting(type=TargetingType.SELF),
         stress_cost=0,
         momentum_cost=0,
