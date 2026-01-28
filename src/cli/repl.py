@@ -402,8 +402,22 @@ class GameREPL:
         # Handle subcommands
         subcommand = args[0].lower() if args else "active"
 
-        if subcommand == "completed":
-            # Get completed quests - for now return empty since we need to filter by character
+        if subcommand == "accept":
+            # Accept a quest
+            if len(args) < 2:
+                return "Usage: /quest accept <quest name>"
+            quest_name = " ".join(args[1:])
+            return self._accept_quest(state, quest_service, quest_name)
+
+        elif subcommand == "abandon":
+            # Abandon an active quest
+            if len(args) < 2:
+                return "Usage: /quest abandon <quest name>"
+            quest_name = " ".join(args[1:])
+            return self._abandon_quest(state, quest_service, quest_name)
+
+        elif subcommand == "completed":
+            # Get completed quests
             return (
                 "You haven't completed any quests yet.\n(Quest tracking by character coming soon)"
             )
@@ -412,12 +426,32 @@ class GameREPL:
             # Get available quests at current location
             quests = quest_service.get_available_quests(state.universe_id)
             if not quests:
-                return "No quests available at this location."
-            lines = ["Available Quests:", "-" * 40]
+                return "No opportunities present themselves at the moment."
+
+            lines = ["Available Opportunities:", "━" * 50, ""]
+
             for quest in quests:
-                lines.append(f"  [ ] {quest.name}")
+                # IC: Show quest giver and hint
+                if quest.giver_name:
+                    lines.append(f"{quest.giver_name} seeks assistance...")
+                else:
+                    lines.append("An opportunity presents itself...")
+
+                # Short description preview
                 if quest.description:
-                    lines.append(f"      {quest.description}")
+                    preview = (
+                        quest.description[:80] + "..."
+                        if len(quest.description) > 80
+                        else quest.description
+                    )
+                    lines.append(f'  "{preview}"')
+
+                # OOC: Command hint
+                # Simplified quest name for command (lowercase, no special chars)
+                simple_name = quest.name.lower().split()[0]
+                lines.append(f"  → /quest accept {simple_name}")
+                lines.append("")
+
             return "\n".join(lines)
 
         else:  # Default: show active quests
@@ -425,37 +459,52 @@ class GameREPL:
 
             if not quests:
                 return (
-                    "You have no active quests.\n\nTry '/quests available' to see available quests."
+                    "You have no active quests.\n\nTry '/quests available' to find opportunities."
                 )
 
-            lines = ["Active Quests:", "-" * 40]
+            lines = ["Your Current Quests:", "━" * 50, ""]
+
             for quest in quests:
-                lines.append(f"  [!] {quest.name}")
+                # Quest title with symbol
+                lines.append(f"📜 {quest.name}")
 
-                # Show objectives
-                if quest.objectives:
-                    completed = sum(1 for obj in quest.objectives if obj.is_complete)
-                    total = len(quest.objectives)
-                    lines.append(f"      Progress: {completed}/{total} objectives")
+                # IC: Show quest giver
+                if quest.giver_name:
+                    lines.append(f"   Given by: {quest.giver_name}")
 
-                    # Show first few objectives
-                    for obj in quest.objectives[:3]:
-                        status = "[x]" if obj.is_complete else "[ ]"
-                        lines.append(f"      {status} {obj.description}")
+                lines.append("")
 
-                # Show rewards
+                # IC: Show objectives with natural language progress
+                for obj in quest.objectives:
+                    status = "✓" if obj.is_complete else "▸"
+
+                    lines.append(f"   {status} {obj.description}")
+
+                    # Show progress naturally
+                    if obj.quantity_required > 1 and not obj.is_complete:
+                        lines.append(
+                            f"      Progress: {obj.quantity_current} of {obj.quantity_required}"
+                        )
+
+                # IC: Promised reward
                 if quest.rewards:
                     reward_strs = []
                     if quest.rewards.gold:
-                        reward_strs.append(f"{quest.rewards.gold} gold")
-                    if quest.rewards.item_ids:
-                        reward_strs.append("special item")
+                        reward_strs.append(f"~{quest.rewards.gold} gold")
+                    if quest.rewards.experience:
+                        reward_strs.append(f"~{quest.rewards.experience} experience")
                     if reward_strs:
-                        lines.append(f"      Reward: {', '.join(reward_strs)}")
+                        lines.append("")
+                        lines.append(f"   Upon completion: {', '.join(reward_strs)}")
 
-                lines.append("")  # Blank line between quests
+                lines.append("")
+                lines.append("━" * 50)
+                lines.append("")
 
-            lines.append("Type '/quests available' to see more quests.")
+            # OOC: Helper text
+            lines.append("Type '/quests available' to find more opportunities.")
+            lines.append("Type '/quest abandon <name>' to give up on a quest.")
+
             return "\n".join(lines)
 
     def _cmd_talk(self, state: GameState, args: list[str]) -> str | None:
@@ -1297,6 +1346,111 @@ class GameREPL:
         )
 
         return resources
+
+    def _accept_quest(self, state: GameState, quest_service: QuestService, quest_name: str) -> str:
+        """Accept a quest by name."""
+        if not state.universe_id:
+            return "No active universe."
+
+        # Find matching quest from available quests
+        available = quest_service.get_available_quests(state.universe_id)
+        quest = None
+
+        quest_name_lower = quest_name.lower()
+        for q in available:
+            if q.name.lower() == quest_name_lower or quest_name_lower in q.name.lower():
+                quest = q
+                break
+
+        if not quest:
+            available_names = [q.name for q in available]
+            if available_names:
+                return (
+                    f"No opportunity matches '{quest_name}'.\n\n"
+                    f"Available: {', '.join(available_names)}"
+                )
+            return f"No opportunities available matching '{quest_name}'."
+
+        # Accept the quest
+        success = quest_service.accept_quest(quest.id)
+        if not success:
+            return f"Unable to accept: {quest.name}"
+
+        # Show confirmation with IC framing
+        lines = []
+
+        # IC: Character accepts the task
+        if quest.giver_name:
+            lines.append(f"You accept the task from {quest.giver_name}.")
+        else:
+            lines.append("You set out to accomplish this task.")
+
+        lines.append("")
+
+        # IC: Quest giver's words (the description)
+        if quest.description:
+            # Wrap in quotes to show it's dialogue
+            lines.append(f'"{quest.description}"')
+            lines.append("")
+
+        # Mixed IC/OOC: Mission objectives
+        lines.append(f"Mission Accepted: {quest.name}")
+        lines.append("━" * 50)
+
+        for obj in quest.objectives:
+            if obj.quantity_required > 1:
+                lines.append(f"  ▸ {obj.description}")
+                lines.append(f"    ({obj.quantity_required} required)")
+            else:
+                lines.append(f"  ▸ {obj.description}")
+
+        # IC: Promised reward
+        if quest.rewards:
+            reward_strs = []
+            if quest.rewards.gold:
+                reward_strs.append(f"~{quest.rewards.gold} gold")
+            if quest.rewards.experience:
+                reward_strs.append(f"~{quest.rewards.experience} experience")
+            if reward_strs:
+                lines.append("")
+                lines.append(f"  Promised reward: {', '.join(reward_strs)}")
+
+        lines.append("")
+        # OOC: Helper text in brackets
+        lines.append("[Quest added to journal - /quests to review progress]")
+
+        return "\n".join(lines)
+
+    def _abandon_quest(self, state: GameState, quest_service: QuestService, quest_name: str) -> str:
+        """Abandon an active quest by name."""
+        if not state.universe_id:
+            return "No active universe."
+
+        # Find matching quest from active quests
+        active = quest_service.get_active_quests(state.universe_id)
+        quest = None
+
+        quest_name_lower = quest_name.lower()
+        for q in active:
+            if q.name.lower() == quest_name_lower or quest_name_lower in q.name.lower():
+                quest = q
+                break
+
+        if not quest:
+            active_names = [q.name for q in active]
+            if active_names:
+                return (
+                    f"Active quest '{quest_name}' not found.\n\n"
+                    f"Active quests: {', '.join(active_names)}"
+                )
+            return f"You don't have an active quest named '{quest_name}'."
+
+        # Abandon the quest
+        success = quest_service.abandon_quest(quest.id)
+        if not success:
+            return f"Unable to abandon: {quest.name}"
+
+        return f"You abandon your quest: {quest.name}\n\n[Removed from quest journal]"
 
     def _is_command(self, text: str) -> bool:
         """Check if input is a special command."""
