@@ -642,8 +642,10 @@ class GameREPL:
         # Handle exit
         if text == "0" or text.lower() in ["bye", "goodbye", "leave", "exit"]:
             farewell = self.conversation_service.end_conversation(context)
+            npc_id = context.npc_id  # Save before clearing context
             state.conversation = None
-            return f'\n{context.npc_name}:\n  "{farewell}"\n\nYou end your conversation with {context.npc_name}.'
+            quest_notification = self._check_quest_progress(state, "dialogue", npc_id)
+            return f'\n{context.npc_name}:\n  "{farewell}"\n\nYou end your conversation with {context.npc_name}.{quest_notification}'
 
         # Handle choice selection or custom input
         if text.isdigit():
@@ -657,8 +659,10 @@ class GameREPL:
 
         # Check if conversation ended
         if options is None:
+            npc_id = context.npc_id  # Save before clearing context
             state.conversation = None
-            return f'\n{context.npc_name}:\n  "{response}"\n\nYou end your conversation with {context.npc_name}.'
+            quest_notification = self._check_quest_progress(state, "dialogue", npc_id)
+            return f'\n{context.npc_name}:\n  "{response}"\n\nYou end your conversation with {context.npc_name}.{quest_notification}'
 
         return self._format_conversation(context.npc_name, response, options)
 
@@ -948,7 +952,10 @@ class GameREPL:
             )
         )
 
-        return f"You travel to {dest_name}.\n\nType /look to see your surroundings."
+        # Check location-based quest objectives
+        quest_notification = self._check_quest_progress(state, "location", dest_id)
+
+        return f"You travel to {dest_name}.\n\nType /look to see your surroundings.{quest_notification}"
 
     def _cmd_exits(self, state: GameState, args: list[str]) -> str | None:
         """Handle exits command - show available exits."""
@@ -1358,11 +1365,24 @@ class GameREPL:
         available = quest_service.get_available_quests(state.universe_id)
         quest = None
 
+        # Score-based matching: exact > starts-with > contains
+        # Prefer shorter names on tie (more specific match)
         quest_name_lower = quest_name.lower()
+        best_score = 0
         for q in available:
-            if q.name.lower() == quest_name_lower or quest_name_lower in q.name.lower():
+            name_lower = q.name.lower()
+            if name_lower == quest_name_lower:
+                score = 3
+            elif name_lower.startswith(quest_name_lower):
+                score = 2
+            elif quest_name_lower in name_lower:
+                score = 1
+            else:
+                continue
+            # Higher score wins; on tie, shorter name wins
+            if score > best_score or (score == best_score and (quest is None or len(q.name) < len(quest.name))):
+                best_score = score
                 quest = q
-                break
 
         if not quest:
             available_names = [q.name for q in available]
@@ -1423,6 +1443,43 @@ class GameREPL:
 
         return "\n".join(lines)
 
+    def _check_quest_progress(
+        self,
+        state: GameState,
+        check_type: str,
+        target_id: UUID,
+    ) -> str:
+        """Check quest progress after player action and return notification text."""
+        if state.universe_id is None:
+            return ""
+
+        quest_service = QuestService(state.engine.dolt, state.engine.neo4j)
+
+        results = []
+        if check_type == "location":
+            results = quest_service.check_location_objectives(state.universe_id, target_id)
+        elif check_type == "dialogue":
+            results = quest_service.check_dialogue_objectives(state.universe_id, target_id)
+
+        # Build IC-style notifications
+        notifications = []
+        for result in results:
+            if result.objective_completed:
+                notifications.append(f"\n[Objective completed: {result.narrative}]")
+            if result.quest_completed and result.rewards_granted:
+                rewards = result.rewards_granted
+                reward_parts = []
+                if rewards.gold > 0:
+                    reward_parts.append(f"{rewards.gold} gold")
+                if rewards.experience > 0:
+                    reward_parts.append(f"{rewards.experience} XP")
+                if reward_parts:
+                    notifications.append(f"\n[Quest completed! Received: {', '.join(reward_parts)}]")
+                else:
+                    notifications.append("\n[Quest completed!]")
+
+        return "".join(notifications)
+
     def _abandon_quest(self, state: GameState, quest_service: QuestService, quest_name: str) -> str:
         """Abandon an active quest by name."""
         if not state.universe_id:
@@ -1432,11 +1489,24 @@ class GameREPL:
         active = quest_service.get_active_quests(state.universe_id)
         quest = None
 
+        # Score-based matching: exact > starts-with > contains
+        # Prefer shorter names on tie (more specific match)
         quest_name_lower = quest_name.lower()
+        best_score = 0
         for q in active:
-            if q.name.lower() == quest_name_lower or quest_name_lower in q.name.lower():
+            name_lower = q.name.lower()
+            if name_lower == quest_name_lower:
+                score = 3
+            elif name_lower.startswith(quest_name_lower):
+                score = 2
+            elif quest_name_lower in name_lower:
+                score = 1
+            else:
+                continue
+            # Higher score wins; on tie, shorter name wins
+            if score > best_score or (score == best_score and (quest is None or len(q.name) < len(quest.name))):
+                best_score = score
                 quest = q
-                break
 
         if not quest:
             active_names = [q.name for q in active]
