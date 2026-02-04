@@ -1365,11 +1365,24 @@ class GameREPL:
         available = quest_service.get_available_quests(state.universe_id)
         quest = None
 
+        # Score-based matching: exact > starts-with > contains
+        # Prefer shorter names on tie (more specific match)
         quest_name_lower = quest_name.lower()
+        best_score = 0
         for q in available:
-            if q.name.lower() == quest_name_lower or quest_name_lower in q.name.lower():
+            name_lower = q.name.lower()
+            if name_lower == quest_name_lower:
+                score = 3
+            elif name_lower.startswith(quest_name_lower):
+                score = 2
+            elif quest_name_lower in name_lower:
+                score = 1
+            else:
+                continue
+            # Higher score wins; on tie, shorter name wins
+            if score > best_score or (score == best_score and (quest is None or len(q.name) < len(quest.name))):
+                best_score = score
                 quest = q
-                break
 
         if not quest:
             available_names = [q.name for q in available]
@@ -1460,7 +1473,10 @@ class GameREPL:
                     reward_parts.append(f"{rewards.gold} gold")
                 if rewards.experience > 0:
                     reward_parts.append(f"{rewards.experience} XP")
-                notifications.append(f"\n[Quest completed! Received: {', '.join(reward_parts)}]")
+                if reward_parts:
+                    notifications.append(f"\n[Quest completed! Received: {', '.join(reward_parts)}]")
+                else:
+                    notifications.append("\n[Quest completed!]")
 
         return "".join(notifications)
 
@@ -1473,11 +1489,24 @@ class GameREPL:
         active = quest_service.get_active_quests(state.universe_id)
         quest = None
 
+        # Score-based matching: exact > starts-with > contains
+        # Prefer shorter names on tie (more specific match)
         quest_name_lower = quest_name.lower()
+        best_score = 0
         for q in active:
-            if q.name.lower() == quest_name_lower or quest_name_lower in q.name.lower():
+            name_lower = q.name.lower()
+            if name_lower == quest_name_lower:
+                score = 3
+            elif name_lower.startswith(quest_name_lower):
+                score = 2
+            elif quest_name_lower in name_lower:
+                score = 1
+            else:
+                continue
+            # Higher score wins; on tie, shorter name wins
+            if score > best_score or (score == best_score and (quest is None or len(q.name) < len(quest.name))):
+                best_score = score
                 quest = q
-                break
 
         if not quest:
             active_names = [q.name for q in active]
