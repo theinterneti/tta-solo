@@ -8,13 +8,13 @@ connections, feelings, and context that enhance narrative retrieval.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 
-class RelationshipType(str, Enum):
+class RelationshipType(StrEnum):
     """Types of relationships between entities in Neo4j."""
 
     # Character-to-Character

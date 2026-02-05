@@ -12,12 +12,12 @@ Also provides GM move selection for miss outcomes.
 from __future__ import annotations
 
 import random
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class PbtAOutcome(str, Enum):
+class PbtAOutcome(StrEnum):
     """PbtA-style outcome tiers."""
 
     STRONG_HIT = "strong_hit"  # 10+: Full success + extra
@@ -25,7 +25,7 @@ class PbtAOutcome(str, Enum):
     MISS = "miss"  # 6-: Failure, GM makes a move
 
 
-class GMMoveType(str, Enum):
+class GMMoveType(StrEnum):
     """
     Moves the GM can make on player failures.
 

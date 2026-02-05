@@ -4,6 +4,8 @@
 
 A Neuro-symbolic text adventure where players collaborate with AI to tell stories in a shared, branching multiverse.
 
+**Current Status**: ✅ **Grade A** - Production Ready | 930 tests passing | 94%+ coverage
+
 ## Vision
 
 The ultimate solo "choose your own adventure" D&D experience you can share with friends:
@@ -32,12 +34,32 @@ The ultimate solo "choose your own adventure" D&D experience you can share with 
 # Install dependencies
 uv sync --all-extras
 
+# Play the game
+uv run python play.py
+
 # Run tests
 uv run pytest -v
 
 # Type check
 uv run pyright src/
 ```
+
+## Current Features
+
+- ✅ **Quest System**: Accept, progress, and complete multi-step quests
+- ✅ **Conversation**: Talk to NPCs with personality-driven dialogue
+- ✅ **Navigation**: Explore 5 locations with /go and /exits commands
+- ✅ **Economy**: Buy and sell items, manage gold
+- ✅ **Abilities**: Use special powers with /use command (2 starter abilities)
+- ✅ **Combat** (tested): Solo combat with momentum, stress, and Defy Death mechanics
+- ✅ **Inventory**: Manage items and equipment
+- ✅ **Character Stats**: Full D&D 5e compatible attributes
+
+## Status Reports
+
+- 📊 [Latest Playtest (Feb 2026)](PLAYTEST_REPORT_2026_02.md) - Grade A
+- 📋 [Spec Implementation Status](SPEC_STATUS.md) - 10/19 complete
+- 🗺️ [Next Steps & Roadmap](NEXT_STEPS.md) - Path to A+
 
 ## Project Structure
 

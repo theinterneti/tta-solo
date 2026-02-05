@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -46,7 +46,7 @@ class TravelResult(BaseModel):
     error: str | None = None
 
 
-class MergeProposalStatus(str, Enum):
+class MergeProposalStatus(StrEnum):
     """Status of a merge proposal."""
 
     PENDING = "pending"

@@ -148,6 +148,32 @@ def create_starter_world(
     dolt.save_entity(forest)
     locations["forest"] = forest.id
 
+    # Create Goblins for combat quest
+    for _ in range(3):
+        goblin = create_character(
+            name="Goblin Raider",
+            description="A small, green-skinned creature with sharp teeth and beady yellow eyes.",
+            universe_id=universe.id,
+            hp_max=7,  # SRD goblin HP
+            ac=15,  # SRD goblin AC (leather + shield + dex)
+            abilities=AbilityScores.model_validate(
+                {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8}
+            ),
+            tags=["goblin", "enemy", "hostile"],
+        )
+        goblin.current_location_id = forest.id
+        dolt.save_entity(goblin)
+
+        # LOCATED_IN relationship
+        neo4j.create_relationship(
+            Relationship(
+                universe_id=universe.id,
+                from_entity_id=goblin.id,
+                to_entity_id=forest.id,
+                relationship_type=RelationshipType.LOCATED_IN,
+            )
+        )
+
     # Crypt Entrance
     crypt = create_location(
         name="The Old Crypt",

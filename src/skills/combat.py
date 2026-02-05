@@ -7,7 +7,7 @@ The Symbolic layer - no hallucination, just dice and math.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from src.skills.dice import roll_dice
 
 
-class CoverType(str, Enum):
+class CoverType(StrEnum):
     """Cover types per SRD 5e."""
 
     NONE = "none"
@@ -24,7 +24,7 @@ class CoverType(str, Enum):
     TOTAL = "total"  # Can't be targeted directly
 
 
-class WeaponProperty(str, Enum):
+class WeaponProperty(StrEnum):
     """Weapon properties per SRD 5e."""
 
     FINESSE = "finesse"  # Can use DEX instead of STR

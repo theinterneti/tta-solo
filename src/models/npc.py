@@ -8,7 +8,7 @@ Based on the Big Five personality model for consistent, believable characters.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -68,7 +68,7 @@ class PersonalityTraits(BaseModel):
         return max(0.0, min(1.0, base))
 
 
-class Motivation(str, Enum):
+class Motivation(StrEnum):
     """
     What drives an NPC's behavior and goals.
 
@@ -181,7 +181,7 @@ class NPCProfile(BaseModel):
         return f"{lc} {ge}"
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     """Types of memories NPCs can form."""
 
     ENCOUNTER = "encounter"
@@ -429,7 +429,7 @@ class RelationshipSummary(BaseModel):
     trust: float = Field(ge=-1.0, le=1.0, default=0.0)
 
 
-class ActionType(str, Enum):
+class ActionType(StrEnum):
     """Types of actions an NPC can take."""
 
     # Combat
@@ -548,7 +548,7 @@ class NPCDecisionContext(BaseModel):
 # =============================================================================
 
 
-class CombatState(str, Enum):
+class CombatState(StrEnum):
     """NPC combat behavior states."""
 
     AGGRESSIVE = "aggressive"  # Attack strongest threat

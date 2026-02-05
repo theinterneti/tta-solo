@@ -7,6 +7,7 @@ OpenRouter supports 100+ models through an OpenAI-compatible API.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -140,14 +141,29 @@ class OpenRouterProvider:
                 "OpenRouter provider not configured. Set OPENROUTER_API_KEY environment variable."
             )
 
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,  # type: ignore[arg-type]
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        # Retry up to 3 times for empty responses or rate limits (common with free-tier models)
+        content = ""
+        for attempt in range(3):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,  # type: ignore[arg-type]
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
 
-        return response.choices[0].message.content or ""
+                content = response.choices[0].message.content or ""
+                if content.strip():
+                    return content
+            except Exception:
+                # Rate limits (429), timeouts, etc. — retry after backoff
+                pass
+
+            # Exponential backoff before retry
+            if attempt < 2:
+                await asyncio.sleep(2.0**attempt)
+
+        return content
 
 
 @dataclass

@@ -8,14 +8,14 @@ objectives, rewards, and quest state tracking.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 
-class QuestStatus(str, Enum):
+class QuestStatus(StrEnum):
     """Status of a quest in the player's journal."""
 
     AVAILABLE = "available"  # Can be discovered/accepted
@@ -25,7 +25,7 @@ class QuestStatus(str, Enum):
     ABANDONED = "abandoned"  # Player gave up
 
 
-class QuestType(str, Enum):
+class QuestType(StrEnum):
     """Types of quests that can be generated."""
 
     FETCH = "fetch"  # Retrieve an item from somewhere
@@ -37,7 +37,7 @@ class QuestType(str, Enum):
     TALK = "talk"  # Have a conversation with an NPC
 
 
-class ObjectiveType(str, Enum):
+class ObjectiveType(StrEnum):
     """Types of quest objectives."""
 
     REACH_LOCATION = "reach_location"  # Go to a specific place

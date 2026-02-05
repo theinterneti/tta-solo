@@ -27,13 +27,16 @@ from src.models.ability import (
     TargetingType,
 )
 from src.models.conversation import ConversationContext, DialogueOptions
-from src.models.entity import Entity
+from src.models.entity import Entity, EntityType
 from src.models.relationships import Relationship, RelationshipType
 from src.models.resources import CooldownTracker, EntityResources, StressMomentumPool
 from src.services.conversation import ConversationService
 from src.services.npc import NPCService
 from src.services.quest import QuestService
+from src.skills.combat import Abilities as CombatAbilities
+from src.skills.combat import Combatant, Weapon, WeaponProperty, resolve_attack
 from src.skills.dice import roll_dice
+from src.skills.solo_combat import defy_death, resolve_solo_round_start
 
 
 class ExitInfo(TypedDict):
@@ -60,6 +63,8 @@ class GameState:
     """NPC that player wants to talk to (for async handler)."""
     resources: EntityResources | None = None
     """Character's resources and known abilities."""
+    defy_death_uses: int = 0
+    """Number of Defy Death saves used today."""
 
 
 @dataclass
@@ -204,6 +209,18 @@ class GameREPL:
                 description="Show your available abilities",
                 handler=self._cmd_abilities,
             ),
+            Command(
+                name="attack",
+                aliases=["fight", "hit"],
+                description="Attack an enemy",
+                handler=self._cmd_attack,
+            ),
+            Command(
+                name="defend",
+                aliases=["dodge", "block"],
+                description="Take a defensive stance (enemies attack at disadvantage)",
+                handler=self._cmd_defend,
+            ),
         ]
 
         for cmd in commands:
@@ -245,10 +262,46 @@ class GameREPL:
 
     def _cmd_look(self, state: GameState, args: list[str]) -> str | None:
         """Handle look command - enhanced version with more details."""
-        # Let the engine generate the base narrative through normal processing
-        # But we'll return None so it goes through the engine, then we can enhance later
-        # For now, the engine's look is already pretty good with NPCs and exits
-        return None  # Let the engine handle it - already shows location, NPCs, exits
+        if state.location_id is None or state.universe_id is None:
+            return "You're nowhere. Something is wrong."
+
+        location = state.engine.dolt.get_entity(state.location_id, state.universe_id)
+        if not location:
+            return "You can't see anything."
+
+        lines = [location.name, "=" * len(location.name), ""]
+
+        if location.description:
+            lines.append(location.description)
+            lines.append("")
+
+        # Show NPCs (non-hostile)
+        npcs = self._get_npcs_at_location(state)
+        if npcs:
+            lines.append("People here:")
+            for _, npc_name in npcs:
+                lines.append(f"  - {npc_name}")
+            lines.append("")
+
+        # Show enemies
+        enemies = self._get_enemies_at_location(state)
+        if enemies:
+            lines.append("Enemies:")
+            for enemy in enemies:
+                hp_status = (
+                    f"({enemy.stats.hp_current}/{enemy.stats.hp_max} HP)" if enemy.stats else ""
+                )
+                lines.append(f"  - {enemy.name} {hp_status}")
+            lines.append("")
+
+        # Show exits
+        exits = self._get_location_exits(state)
+        if exits:
+            lines.append("Exits:")
+            for direction, info in exits.items():
+                lines.append(f"  {direction} -> {info['name']}")
+
+        return "\n".join(lines)
 
     def _cmd_status(self, state: GameState, args: list[str]) -> str | None:
         """Handle status command."""
@@ -599,8 +652,19 @@ class GameREPL:
 
         npcs = []
         for rel in entities_at_location:
-            entity = state.engine.dolt.get_entity(rel.from_entity_id, universe_id)
+            # Handle both relationship directions (in-memory vs real Neo4j may differ)
+            if rel.from_entity_id == location_id:
+                other_entity_id = rel.to_entity_id
+            elif rel.to_entity_id == location_id:
+                other_entity_id = rel.from_entity_id
+            else:
+                continue  # Relationship doesn't involve this location
+
+            entity = state.engine.dolt.get_entity(other_entity_id, universe_id)
             if entity and entity.type == "character" and entity.id != state.character_id:
+                # Skip hostile entities - they show under "Enemies" instead
+                if entity.tags and any(t in entity.tags for t in ["enemy", "hostile"]):
+                    continue
                 npcs.append((entity.id, entity.name))
 
         return npcs
@@ -1320,6 +1384,432 @@ class GameREPL:
 
         return " | ".join(parts) if parts else "No tracked resources"
 
+    # =========================================================================
+    # Combat Commands
+    # =========================================================================
+
+    def _cmd_attack(self, state: GameState, args: list[str]) -> str | None:
+        """Handle attack command - full combat round against an enemy."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        if not args:
+            return "Attack whom? Usage: /attack <target>"
+
+        target_name = " ".join(args).lower()
+
+        # Find hostile entities at current location
+        enemies = self._get_enemies_at_location(state)
+        if not enemies:
+            return "There are no enemies here to attack."
+
+        # Match target by name
+        target = None
+        for enemy in enemies:
+            if target_name in enemy.name.lower():
+                target = enemy
+                break
+
+        if not target:
+            enemy_names = [e.name for e in enemies]
+            return f"No enemy matching '{target_name}'. Enemies here: {', '.join(enemy_names)}"
+
+        lines: list[str] = []
+
+        # 1. Round start: momentum + fray die
+        round_start_lines = self._process_round_start(state, enemies)
+        lines.extend(round_start_lines)
+
+        # Re-check target is still alive (fray die may have killed it)
+        target_entity = state.engine.dolt.get_entity(target.id, state.universe_id)
+        if not target_entity or not target_entity.stats or target_entity.stats.hp_current <= 0:
+            # Target was killed by fray die
+            if lines:
+                lines.append("")
+            # Still process enemy turns if any survive
+            surviving = self._get_enemies_at_location(state)
+            if surviving:
+                enemy_lines = self._process_enemy_turns(state, surviving)
+                lines.extend(enemy_lines)
+            lines.append(self._format_combat_status(state))
+            return "\n".join(lines)
+
+        # 2. Player attack
+        if lines:
+            lines.append("")
+
+        weapon = self._get_player_weapon(state)
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if not player:
+            return "Could not find your character."
+
+        attacker = self._entity_to_combatant(player)
+        defender = self._entity_to_combatant(target_entity)
+
+        result = resolve_attack(attacker, defender, weapon)
+
+        if result.critical:
+            lines.append(
+                f"Critical hit! You strike {target_entity.name} for {result.damage} "
+                f"{result.damage_type} damage!"
+            )
+        elif result.hit:
+            lines.append(
+                f"You hit {target_entity.name} for {result.damage} {result.damage_type} damage!"
+            )
+        elif result.fumble:
+            lines.append(f"You swing wildly and miss {target_entity.name} completely!")
+        else:
+            lines.append(
+                f"Your attack misses {target_entity.name}. "
+                f"(Rolled {result.total_attack} vs AC {result.target_ac})"
+            )
+
+        # Apply damage if hit
+        if result.hit and result.damage and target_entity.stats:
+            target_entity.stats.hp_current -= result.damage
+            state.engine.dolt.save_entity(target_entity)
+
+            if target_entity.stats.hp_current <= 0:
+                lines.append(f"{target_entity.name} falls defeated!")
+                self._remove_entity_from_location(state, target_entity)
+                loot_note = self._grant_combat_rewards(state, target_entity)
+                if loot_note:
+                    lines.append(loot_note)
+                quest_notification = self._check_quest_progress(state, "defeat", target_entity.id)
+                if quest_notification:
+                    lines.append(quest_notification)
+            else:
+                lines.append(
+                    f"{target_entity.name} has {target_entity.stats.hp_current}/"
+                    f"{target_entity.stats.hp_max} HP remaining."
+                )
+
+        # 3. Enemy counterattacks
+        surviving = self._get_enemies_at_location(state)
+        if surviving:
+            lines.append("")
+            enemy_lines = self._process_enemy_turns(state, surviving)
+            lines.extend(enemy_lines)
+
+        # 4. Combat status line
+        lines.append(self._format_combat_status(state))
+
+        return "\n".join(lines)
+
+    def _cmd_defend(self, state: GameState, args: list[str]) -> str | None:
+        """Handle defend command - take a defensive stance, enemies attack at disadvantage."""
+        if state.character_id is None or state.universe_id is None or state.location_id is None:
+            return "No active session."
+
+        enemies = self._get_enemies_at_location(state)
+        if not enemies:
+            return "There are no enemies here. You lower your guard."
+
+        lines: list[str] = ["You take a defensive stance, ready to dodge and parry.", ""]
+
+        # Process enemy turns with disadvantage
+        enemy_lines = self._process_enemy_turns(state, enemies, disadvantage=True)
+        lines.extend(enemy_lines)
+
+        # Combat status line
+        lines.append(self._format_combat_status(state))
+
+        return "\n".join(lines)
+
+    def _get_enemies_at_location(self, state: GameState) -> list[Entity]:
+        """Get hostile entities at player's current location."""
+        if not state.location_id or not state.universe_id:
+            return []
+
+        # Get all entities at location via LOCATED_IN relationships
+        relationships = state.engine.neo4j.get_relationships(
+            state.location_id,
+            state.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+
+        enemies = []
+        for rel in relationships:
+            # Handle both relationship directions (in-memory vs real Neo4j may differ)
+            if rel.from_entity_id == state.location_id:
+                other_entity_id = rel.to_entity_id
+            elif rel.to_entity_id == state.location_id:
+                other_entity_id = rel.from_entity_id
+            else:
+                continue  # Relationship doesn't involve this location
+
+            entity = state.engine.dolt.get_entity(other_entity_id, state.universe_id)
+            # Check: is character, not player, hostile, and alive
+            if (
+                entity
+                and entity.type == EntityType.CHARACTER
+                and entity.id != state.character_id
+                and entity.tags
+                and any(t in entity.tags for t in ["enemy", "hostile"])
+                and entity.stats
+                and entity.stats.hp_current > 0
+            ):
+                enemies.append(entity)
+
+        return enemies
+
+    def _entity_to_combatant(self, entity: Entity) -> Combatant:
+        """Convert Entity to Combatant for combat resolution."""
+        stats = entity.stats
+        if not stats:
+            return Combatant(name=entity.name)
+
+        return Combatant(
+            name=entity.name,
+            ac=stats.ac,
+            abilities=CombatAbilities(
+                str=stats.abilities.str_,
+                dex=stats.abilities.dex,
+                con=stats.abilities.con,
+                int=stats.abilities.int_,
+                wis=stats.abilities.wis,
+                cha=stats.abilities.cha,
+            ),
+            proficiency_bonus=stats.proficiency_bonus,
+            proficient_weapons=["shortsword", "longsword"],  # Default
+        )
+
+    def _get_player_weapon(self, state: GameState) -> Weapon:
+        """Get player's equipped weapon or default."""
+        # Default: Rusty Shortsword from starter inventory
+        return Weapon(
+            name="Rusty Shortsword",
+            damage_dice="1d6",
+            damage_type="slashing",
+            properties=[WeaponProperty.FINESSE, WeaponProperty.LIGHT],
+        )
+
+    def _get_enemy_weapon(self, entity: Entity) -> Weapon:
+        """Get weapon for an enemy entity."""
+        # SRD Goblin: Scimitar
+        if entity.tags and "goblin" in entity.tags:
+            return Weapon(
+                name="Scimitar",
+                damage_dice="1d6",
+                damage_type="slashing",
+                properties=[WeaponProperty.FINESSE, WeaponProperty.LIGHT],
+            )
+        # Default: basic melee
+        return Weapon(
+            name="Claws",
+            damage_dice="1d4",
+            damage_type="slashing",
+            properties=[],
+        )
+
+    def _process_round_start(self, state: GameState, enemies: list[Entity]) -> list[str]:
+        """Process solo round start: momentum gain + fray die."""
+        if not state.resources or not state.resources.stress_momentum:
+            return []
+        if not state.character_id or not state.universe_id:
+            return []
+
+        character_id = state.character_id
+        universe_id = state.universe_id
+        pool = state.resources.stress_momentum
+
+        # Build enemy list for fray die: (entity_id, hit_dice)
+        enemy_tuples: list[tuple[UUID, int]] = []
+        for e in enemies:
+            hd = e.stats.level if e.stats else 1
+            enemy_tuples.append((e.id, hd))
+
+        # Get player level
+        player = state.engine.dolt.get_entity(character_id, universe_id)
+        actor_level = player.stats.level if player and player.stats else 1
+
+        result, new_momentum = resolve_solo_round_start(
+            actor_level, enemy_tuples, pool.momentum, pool.momentum_max
+        )
+        pool.momentum = new_momentum
+
+        lines: list[str] = []
+        if result.momentum_gained > 0:
+            lines.append(f"[Combat flow: +{result.momentum_gained} momentum]")
+
+        # Apply fray die damage to actual entities
+        if result.fray_result and result.fray_result.damage > 0:
+            for target_id_str, dmg in result.fray_result.damage_per_target.items():
+                fray_target = state.engine.dolt.get_entity(UUID(target_id_str), universe_id)
+                if fray_target and fray_target.stats:
+                    fray_target.stats.hp_current -= dmg
+                    state.engine.dolt.save_entity(fray_target)
+                    if fray_target.stats.hp_current <= 0:
+                        lines.append(
+                            f"Your fighting spirit fells {fray_target.name}! (Fray: {dmg} damage)"
+                        )
+                        self._remove_entity_from_location(state, fray_target)
+                        loot_note = self._grant_combat_rewards(state, fray_target)
+                        if loot_note:
+                            lines.append(loot_note)
+                        quest_note = self._check_quest_progress(state, "defeat", fray_target.id)
+                        if quest_note:
+                            lines.append(quest_note)
+                    else:
+                        lines.append(
+                            f"Your presence wounds {fray_target.name}! (Fray: {dmg} damage)"
+                        )
+
+        return lines
+
+    def _process_enemy_turns(
+        self, state: GameState, enemies: list[Entity], disadvantage: bool = False
+    ) -> list[str]:
+        """Process enemy counterattacks against the player."""
+        if not state.character_id or not state.universe_id:
+            return []
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if not player or not player.stats:
+            return []
+
+        defender = self._entity_to_combatant(player)
+        lines: list[str] = []
+
+        for enemy in enemies:
+            attacker = self._entity_to_combatant(enemy)
+            weapon = self._get_enemy_weapon(enemy)
+            result = resolve_attack(attacker, defender, weapon, disadvantage=disadvantage)
+
+            if result.critical:
+                lines.append(
+                    f"{enemy.name} scores a critical hit for {result.damage} "
+                    f"{result.damage_type} damage!"
+                )
+            elif result.hit:
+                lines.append(
+                    f"{enemy.name} hits you for {result.damage} {result.damage_type} damage!"
+                )
+            else:
+                lines.append(f"{enemy.name} attacks but misses.")
+
+            # Apply damage
+            if result.hit and result.damage:
+                player.stats.hp_current -= result.damage
+
+                # Add stress when taking damage
+                if state.resources and state.resources.stress_momentum:
+                    state.resources.stress_momentum.add_stress(1)
+
+                # Check for Defy Death
+                if player.stats.hp_current <= 0:
+                    defy_lines = self._process_defy_death(state, player, result.damage)
+                    lines.extend(defy_lines)
+
+                # Always persist HP changes (including death) before possibly breaking
+                state.engine.dolt.save_entity(player)
+
+                if player.stats.hp_current <= 0:
+                    break  # Player is dead, stop enemy turns
+
+        return lines
+
+    def _process_defy_death(
+        self, state: GameState, player: Entity, damage_this_round: int
+    ) -> list[str]:
+        """Process Defy Death when player reaches 0 HP."""
+        if not player.stats:
+            return []
+
+        con_mod = (player.stats.abilities.con - 10) // 2
+
+        result = defy_death(con_mod, damage_this_round, state.defy_death_uses)
+
+        lines: list[str] = []
+        if result.survived:
+            player.stats.hp_current = 1
+            state.defy_death_uses += 1
+            if result.is_nat_20:
+                lines.append("NATURAL 20! You defy death spectacularly! (1 HP)")
+            else:
+                lines.append(f"You defy death! (Rolled {result.total} vs DC {result.dc}) (1 HP)")
+            if result.exhaustion_gained:
+                lines.append("You gain 1 level of exhaustion.")
+            lines.append(f"[Defy Death uses remaining: {result.uses_remaining}]")
+        else:
+            if result.is_nat_1:
+                lines.append("Natural 1... You cannot escape death this time.")
+            else:
+                lines.append(f"You fall in battle. (Rolled {result.total} vs DC {result.dc})")
+            lines.append("Your vision fades to black...")
+
+        return lines
+
+    def _format_combat_status(self, state: GameState) -> str:
+        """Format combat status line."""
+        parts: list[str] = []
+
+        if not state.character_id or not state.universe_id:
+            return "\n[No character data]"
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if player and player.stats:
+            parts.append(f"HP: {player.stats.hp_current}/{player.stats.hp_max}")
+
+        if state.resources and state.resources.stress_momentum:
+            pool = state.resources.stress_momentum
+            parts.append(f"Momentum: {pool.momentum}/{pool.momentum_max}")
+            if pool.stress > 0:
+                parts.append(f"Stress: {pool.stress}/{pool.stress_max}")
+
+        enemies = self._get_enemies_at_location(state)
+        if enemies:
+            parts.append(f"Enemies: {len(enemies)} remaining")
+
+        return f"\n[{' | '.join(parts)}]"
+
+    def _grant_combat_rewards(self, state: GameState, defeated: Entity) -> str | None:
+        """Grant gold loot when an enemy is defeated. Returns notification or None."""
+        if not state.character_id or not state.universe_id:
+            return None
+
+        # Determine gold drop based on enemy type
+        if defeated.tags and "goblin" in defeated.tags:
+            # Goblin loot: 1d4+2 gp (3-6gp each, ~13.5gp for 3 goblins)
+            gold_roll = roll_dice("1d4+2")
+            gold_copper = gold_roll.total * 100
+        else:
+            # Default loot: 1d6 sp
+            gold_roll = roll_dice("1d6")
+            gold_copper = gold_roll.total * 10
+
+        if gold_copper <= 0:
+            return None
+
+        player = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if not player or not player.stats:
+            return None
+
+        player.stats.gold_copper += gold_copper
+        state.engine.dolt.save_entity(player)
+
+        return f"[Loot: {self._format_price(gold_copper)}]"
+
+    def _remove_entity_from_location(self, state: GameState, entity: Entity) -> None:
+        """Remove defeated entity from location."""
+        if not state.location_id or not state.universe_id:
+            return
+
+        # Find and delete the LOCATED_IN relationship
+        relationships = state.engine.neo4j.get_relationships(
+            entity.id,
+            state.universe_id,
+            relationship_type="LOCATED_IN",
+        )
+
+        for rel in relationships:
+            if rel.to_entity_id == state.location_id:
+                state.engine.neo4j.delete_relationship(rel.id)
+                break
+
+        # Mark entity as inactive (soft delete)
+        entity.is_active = False
+        state.engine.dolt.save_entity(entity)
+
     def _create_starter_resources(self) -> EntityResources:
         """Create starter resources with basic abilities for new characters."""
         # Create a basic martial character setup
@@ -1380,7 +1870,9 @@ class GameREPL:
             else:
                 continue
             # Higher score wins; on tie, shorter name wins
-            if score > best_score or (score == best_score and (quest is None or len(q.name) < len(quest.name))):
+            if score > best_score or (
+                score == best_score and (quest is None or len(q.name) < len(quest.name))
+            ):
                 best_score = score
                 quest = q
 
@@ -1460,12 +1952,18 @@ class GameREPL:
             results = quest_service.check_location_objectives(state.universe_id, target_id)
         elif check_type == "dialogue":
             results = quest_service.check_dialogue_objectives(state.universe_id, target_id)
+        elif check_type == "defeat":
+            results = quest_service.check_defeat_objectives(state.universe_id, target_id)
 
         # Build IC-style notifications
         notifications = []
         for result in results:
-            if result.objective_completed:
-                notifications.append(f"\n[Objective completed: {result.narrative}]")
+            if result.objective_updated and result.narrative:
+                if result.objective_completed:
+                    notifications.append(f"\n[{result.narrative}]")
+                else:
+                    # Show progress update for multi-kill objectives
+                    notifications.append(f"\n[{result.narrative}]")
             if result.quest_completed and result.rewards_granted:
                 rewards = result.rewards_granted
                 reward_parts = []
@@ -1474,7 +1972,9 @@ class GameREPL:
                 if rewards.experience > 0:
                     reward_parts.append(f"{rewards.experience} XP")
                 if reward_parts:
-                    notifications.append(f"\n[Quest completed! Received: {', '.join(reward_parts)}]")
+                    notifications.append(
+                        f"\n[Quest completed! Received: {', '.join(reward_parts)}]"
+                    )
                 else:
                     notifications.append("\n[Quest completed!]")
 
@@ -1504,7 +2004,9 @@ class GameREPL:
             else:
                 continue
             # Higher score wins; on tie, shorter name wins
-            if score > best_score or (score == best_score and (quest is None or len(q.name) < len(quest.name))):
+            if score > best_score or (
+                score == best_score and (quest is None or len(q.name) < len(quest.name))
+            ):
                 best_score = score
                 quest = q
 

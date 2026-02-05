@@ -8,7 +8,7 @@ Magic, Tech, and Martial abilities each have unique failure modes.
 from __future__ import annotations
 
 import random
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,7 @@ from src.models.ability import AbilitySource
 # =============================================================================
 
 
-class ComplicationType(str, Enum):
+class ComplicationType(StrEnum):
     """Types of complications that can occur on weak hits."""
 
     # Magic complications
@@ -46,7 +46,7 @@ class ComplicationType(str, Enum):
     PARTIAL = "partial"  # Reduced effectiveness
 
 
-class GMAbilityMoveType(str, Enum):
+class GMAbilityMoveType(StrEnum):
     """GM moves specific to ability failures."""
 
     # Magic misses

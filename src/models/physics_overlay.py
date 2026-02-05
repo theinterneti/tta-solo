@@ -8,14 +8,14 @@ hard sci-fi setting, while tech abilities might be enhanced in a cyberpunk world
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 from src.models.ability import AbilitySource
 
 
-class SourceModifier(str, Enum):
+class SourceModifier(StrEnum):
     """How a physics overlay modifies an ability source."""
 
     ENHANCED = "enhanced"  # +1 die to damage/healing, advantage on ability checks

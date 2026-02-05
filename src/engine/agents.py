@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -32,7 +32,7 @@ from src.engine.router import SkillRouter
 from src.models import Entity, RelationshipType
 
 
-class AgentRole(str, Enum):
+class AgentRole(StrEnum):
     """Roles for specialized agents."""
 
     GM = "gm"  # Game Master - orchestration and narrative
@@ -40,7 +40,7 @@ class AgentRole(str, Enum):
     LOREKEEPER = "lorekeeper"  # Context retrieval
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     """Types of inter-agent messages."""
 
     # Requests

@@ -118,7 +118,9 @@ class TestLLMIntegration:
         messages = [
             {"role": "user", "content": "Say 'hello' and nothing else."},
         ]
-        response = await llm_provider.complete(messages, max_tokens=10, temperature=0.0)
+        # Use max_tokens=256 to accommodate reasoning models that consume
+        # tokens on internal chain-of-thought before producing visible output
+        response = await llm_provider.complete(messages, max_tokens=256, temperature=0.0)
 
         assert response is not None
         assert len(response) > 0

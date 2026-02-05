@@ -10,14 +10,14 @@ These models represent the "Truth" stored in Dolt.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 
-class EntityType(str, Enum):
+class EntityType(StrEnum):
     """Types of entities in the game world."""
 
     CHARACTER = "character"
