@@ -6,13 +6,13 @@ Character archetypes define combat role, paradigm (power source), and focus (spe
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
-class Archetype(str, Enum):
+class Archetype(StrEnum):
     """Combat/social role - what you do."""
 
     GUARDIAN = "guardian"  # Protect allies, control space, absorb damage
@@ -22,7 +22,7 @@ class Archetype(str, Enum):
     SPECIALIST = "specialist"  # Unique utility, infiltration, problem-solving
 
 
-class Paradigm(str, Enum):
+class Paradigm(StrEnum):
     """Power source approach - how you do it."""
 
     ARCANE = "arcane"  # Arcane magic - spell slots, metamagic

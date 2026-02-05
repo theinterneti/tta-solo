@@ -8,13 +8,13 @@ Each universe is a Dolt branch, allowing Git-like versioning of game state.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 
-class UniverseStatus(str, Enum):
+class UniverseStatus(StrEnum):
     """Status of a universe/timeline."""
 
     ACTIVE = "active"  # Currently playable

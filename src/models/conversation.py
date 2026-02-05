@@ -8,13 +8,13 @@ topics, dialogue choices, and conversation state.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 
-class ConversationTopic(str, Enum):
+class ConversationTopic(StrEnum):
     """Available conversation topics."""
 
     # General

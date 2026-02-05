@@ -6,7 +6,7 @@ Tracks active conditions, temporary effects, and per-entity combat state.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 # =============================================================================
 
 
-class ConditionType(str, Enum):
+class ConditionType(StrEnum):
     """Standard condition types from SRD 5e plus custom conditions."""
 
     # SRD 5e Conditions
@@ -44,7 +44,7 @@ class ConditionType(str, Enum):
     CONCENTRATING = "concentrating"  # Meta-condition for tracking
 
 
-class DurationType(str, Enum):
+class DurationType(StrEnum):
     """How condition/effect duration is tracked."""
 
     ROUNDS = "rounds"  # Expires after N rounds
@@ -168,7 +168,7 @@ class ConditionInstance(BaseModel):
 # =============================================================================
 
 
-class ModifierType(str, Enum):
+class ModifierType(StrEnum):
     """How the modifier is applied."""
 
     BONUS = "bonus"  # Add to stat

@@ -7,7 +7,7 @@ The "Singularity Engine" - a single model that represents any ability in the gam
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 # =============================================================================
 
 
-class AbilitySource(str, Enum):
+class AbilitySource(StrEnum):
     """Primary source of an ability's power."""
 
     MAGIC = "magic"
@@ -26,7 +26,7 @@ class AbilitySource(str, Enum):
     MARTIAL = "martial"
 
 
-class MagicSubtype(str, Enum):
+class MagicSubtype(StrEnum):
     """Subtypes for magic abilities."""
 
     ARCANE = "arcane"  # Learned/studied magic (wizards)
@@ -35,7 +35,7 @@ class MagicSubtype(str, Enum):
     PSIONIC = "psionic"  # Mind powers (psychics)
 
 
-class TechSubtype(str, Enum):
+class TechSubtype(StrEnum):
     """Subtypes for tech abilities."""
 
     BIOTECH = "biotech"  # Organic enhancements
@@ -43,7 +43,7 @@ class TechSubtype(str, Enum):
     NANOTECH = "nanotech"  # Nanomachine-based abilities
 
 
-class MartialSubtype(str, Enum):
+class MartialSubtype(StrEnum):
     """Subtypes for martial abilities."""
 
     KI = "ki"  # Internal energy manipulation
@@ -56,7 +56,7 @@ class MartialSubtype(str, Enum):
 # =============================================================================
 
 
-class MechanismType(str, Enum):
+class MechanismType(StrEnum):
     """How an ability's usage is gated/limited."""
 
     SLOTS = "slots"  # Traditional spell slots (1st-9th level)
@@ -72,7 +72,7 @@ class MechanismType(str, Enum):
 # =============================================================================
 
 
-class TargetingType(str, Enum):
+class TargetingType(StrEnum):
     """How an ability selects its targets."""
 
     SELF = "self"

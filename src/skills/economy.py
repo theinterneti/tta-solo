@@ -7,7 +7,7 @@ All currency stored internally as copper pieces for precision.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
@@ -106,7 +106,7 @@ class ItemStack(BaseModel):
         return Currency.from_copper(self.unit_value.total_copper * self.quantity)
 
 
-class TransactionType(str, Enum):
+class TransactionType(StrEnum):
     """Types of economic transactions."""
 
     BUY = "buy"  # Actor pays currency, receives items

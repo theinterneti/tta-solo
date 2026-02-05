@@ -652,7 +652,15 @@ class GameREPL:
 
         npcs = []
         for rel in entities_at_location:
-            entity = state.engine.dolt.get_entity(rel.from_entity_id, universe_id)
+            # Handle both relationship directions (in-memory vs real Neo4j may differ)
+            if rel.from_entity_id == location_id:
+                other_entity_id = rel.to_entity_id
+            elif rel.to_entity_id == location_id:
+                other_entity_id = rel.from_entity_id
+            else:
+                continue  # Relationship doesn't involve this location
+
+            entity = state.engine.dolt.get_entity(other_entity_id, universe_id)
             if entity and entity.type == "character" and entity.id != state.character_id:
                 # Skip hostile entities - they show under "Enemies" instead
                 if entity.tags and any(t in entity.tags for t in ["enemy", "hostile"]):
@@ -1412,10 +1420,7 @@ class GameREPL:
         round_start_lines = self._process_round_start(state, enemies)
         lines.extend(round_start_lines)
 
-        # Re-fetch enemies (fray die may have killed some)
-        enemies = self._get_enemies_at_location(state)
-
-        # Re-check target is still alive
+        # Re-check target is still alive (fray die may have killed it)
         target_entity = state.engine.dolt.get_entity(target.id, state.universe_id)
         if not target_entity or not target_entity.stats or target_entity.stats.hp_current <= 0:
             # Target was killed by fray die
@@ -1526,14 +1531,22 @@ class GameREPL:
 
         enemies = []
         for rel in relationships:
-            entity = state.engine.dolt.get_entity(rel.from_entity_id, state.universe_id)
+            # Handle both relationship directions (in-memory vs real Neo4j may differ)
+            if rel.from_entity_id == state.location_id:
+                other_entity_id = rel.to_entity_id
+            elif rel.to_entity_id == state.location_id:
+                other_entity_id = rel.from_entity_id
+            else:
+                continue  # Relationship doesn't involve this location
+
+            entity = state.engine.dolt.get_entity(other_entity_id, state.universe_id)
             # Check: is character, not player, hostile, and alive
             if (
                 entity
                 and entity.type == EntityType.CHARACTER
                 and entity.id != state.character_id
                 and entity.tags
-                and any(t in entity.tags for t in ["enemy", "hostile", "goblin"])
+                and any(t in entity.tags for t in ["enemy", "hostile"])
                 and entity.stats
                 and entity.stats.hp_current > 0
             ):
@@ -1687,10 +1700,12 @@ class GameREPL:
                 if player.stats.hp_current <= 0:
                     defy_lines = self._process_defy_death(state, player, result.damage)
                     lines.extend(defy_lines)
-                    if player.stats.hp_current <= 0:
-                        break  # Player is dead, stop enemy turns
 
+                # Always persist HP changes (including death) before possibly breaking
                 state.engine.dolt.save_entity(player)
+
+                if player.stats.hp_current <= 0:
+                    break  # Player is dead, stop enemy turns
 
         return lines
 

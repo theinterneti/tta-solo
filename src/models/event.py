@@ -8,14 +8,14 @@ Stored in Dolt's `events` table as an append-only log.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Types of events that can occur in the game world."""
 
     # Combat events
@@ -83,7 +83,7 @@ class EventType(str, Enum):
     PLAYER_LEAVE = "player_leave"
 
 
-class EventOutcome(str, Enum):
+class EventOutcome(StrEnum):
     """Possible outcomes of an event."""
 
     SUCCESS = "success"

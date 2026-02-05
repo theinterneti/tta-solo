@@ -4,7 +4,7 @@
 
 A Neuro-symbolic text adventure where players collaborate with AI to tell stories in a shared, branching multiverse.
 
-**Current Status**: ✅ **Grade A** - Production Ready | 929/930 tests passing | 94%+ coverage
+**Current Status**: ✅ **Grade A** - Production Ready | 930 tests passing | 94%+ coverage
 
 ## Vision
 
