@@ -20,9 +20,11 @@ from src.engine.models import EngineConfig, TurnResult
 from src.models.ability import (
     Ability,
     AbilitySource,
+    ConditionEffect,
     DamageEffect,
     HealingEffect,
     MechanismType,
+    StatModifierEffect,
     Targeting,
     TargetingType,
 )
@@ -1164,6 +1166,17 @@ class GameREPL:
                 if ability.healing.flat_amount:
                     heal_str += f"+{ability.healing.flat_amount}"
                 effect_parts.append(f"heal {heal_str}")
+            if ability.stat_modifiers:
+                for mod in ability.stat_modifiers:
+                    sign = "+" if mod.modifier > 0 else ""
+                    effect_parts.append(f"{sign}{mod.modifier} {mod.stat.upper()}")
+            if ability.conditions:
+                for cond in ability.conditions:
+                    effect_parts.append(cond.condition)
+            if "stress" in ability.tags:
+                effect_parts.append("-1 stress")
+            if "movement" in ability.tags:
+                effect_parts.append("safe movement")
 
             effect_str = ", ".join(effect_parts) if effect_parts else "utility"
 
@@ -1286,27 +1299,66 @@ class GameREPL:
         lines = []
         lines.append(f"You use {ability.name}!")
 
-        # Roll for effect
-        total_damage = 0
-        total_healing = 0
+        # Handle stat modifiers (e.g., Shield Wall's +2 AC)
+        if ability.stat_modifiers:
+            for mod in ability.stat_modifiers:
+                sign = "+" if mod.modifier > 0 else ""
+                duration = ""
+                if mod.duration_type == "rounds" and mod.duration_value:
+                    duration = (
+                        f" for {mod.duration_value} round{'s' if mod.duration_value > 1 else ''}"
+                    )
+                elif mod.duration_type == "concentration":
+                    duration = " (concentration)"
+                lines.append(f"  {mod.stat.upper()} {sign}{mod.modifier}{duration}")
 
+        # Handle stress recovery (Rally ability)
+        if "stress" in ability.tags and state.resources and state.resources.stress_momentum:
+            pool = state.resources.stress_momentum
+            if pool.stress > 0:
+                reduced = pool.reduce_stress(1)
+                lines.append(
+                    f"  Stress reduced by {reduced}! (Stress: {pool.stress}/{pool.stress_max})"
+                )
+            else:
+                lines.append("  You're already calm and focused.")
+
+        # Handle damage abilities
         if ability.damage:
             damage_roll = self._roll_dice(ability.damage.dice)
-            total_damage = damage_roll
             lines.append(f"  Damage: {damage_roll} {ability.damage.damage_type}")
 
-            if target and target.stats:
-                # Apply damage to target
-                target.stats.hp_current = max(0, target.stats.hp_current - total_damage)
+            # For multi-target abilities (like Cleave), get multiple targets
+            if ability.targeting.type == TargetingType.MULTIPLE:
+                targets = self._get_multiple_targets(state, ability.targeting.max_targets or 2)
+                if targets:
+                    for t in targets:
+                        if t.stats:
+                            t.stats.hp_current = max(0, t.stats.hp_current - damage_roll)
+                            state.engine.dolt.save_entity(t)
+                            if t.stats.hp_current <= 0:
+                                lines.append(f"  {t.name} is defeated!")
+                                self._remove_entity_from_location(state, t)
+                            else:
+                                lines.append(
+                                    f"  {t.name} takes {damage_roll} damage! "
+                                    f"({t.stats.hp_current}/{t.stats.hp_max} HP)"
+                                )
+                else:
+                    lines.append("  No enemies in range!")
+            elif target and target.stats:
+                # Single target damage
+                target.stats.hp_current = max(0, target.stats.hp_current - damage_roll)
                 state.engine.dolt.save_entity(target)
                 if target.stats.hp_current <= 0:
                     lines.append(f"  {target.name} is defeated!")
                 else:
                     lines.append(
-                        f"  {target.name} takes {total_damage} damage! "
+                        f"  {target.name} takes {damage_roll} damage! "
                         f"({target.stats.hp_current}/{target.stats.hp_max} HP)"
                     )
 
+        # Handle healing abilities
         if ability.healing:
             if ability.healing.dice:
                 heal_roll = self._roll_dice(ability.healing.dice)
@@ -1332,11 +1384,30 @@ class GameREPL:
                     f"({heal_target.stats.hp_current}/{heal_target.stats.hp_max} HP)"
                 )
 
-        if ability.conditions:
+        # Handle conditions (Cheap Shot's stun, etc.)
+        if ability.conditions and target:
+            for cond in ability.conditions:
+                duration_str = ""
+                if cond.duration_type == "rounds" and cond.duration_value:
+                    duration_str = f" for {cond.duration_value} round{'s' if cond.duration_value > 1 else ''}"
+                elif cond.duration_type == "until_save":
+                    duration_str = " (save ends)"
+                lines.append(f"  {target.name} is {cond.condition}{duration_str}!")
+        elif ability.conditions:
+            # No target specified for condition ability
             cond_names = [c.condition for c in ability.conditions]
-            lines.append(f"  Conditions applied: {', '.join(cond_names)}")
+            lines.append(f"  Effect: {', '.join(cond_names)}")
+
+        # Handle movement/utility abilities (Disengage, etc.)
+        if "movement" in ability.tags:
+            lines.append("  You can move freely without provoking opportunity attacks this turn.")
 
         return "\n".join(lines)
+
+    def _get_multiple_targets(self, state: GameState, max_targets: int) -> list[Entity]:
+        """Get multiple enemy targets for AoE abilities like Cleave."""
+        enemies = self._get_enemies_at_location(state)
+        return enemies[:max_targets]
 
     def _roll_dice(self, dice_str: str) -> int:
         """Roll dice from a string like '2d6' or '1d10+5'."""
@@ -1811,36 +1882,161 @@ class GameREPL:
         state.engine.dolt.save_entity(entity)
 
     def _create_starter_resources(self) -> EntityResources:
-        """Create starter resources with basic abilities for new characters."""
-        # Create a basic martial character setup
-        second_wind = Ability(
-            name="Second Wind",
-            description="Draw on your stamina to heal yourself.",
+        """Create starter resources with narrative-first abilities.
+
+        These abilities use universe-agnostic names and descriptions.
+        The LLM will narrate HOW they manifest based on the universe's
+        physics overlay and current context.
+        """
+        # =================================================================
+        # Recovery Abilities
+        # =================================================================
+
+        catch_your_breath = Ability(
+            name="Catch Your Breath",
+            description="Draw on your inner reserves to recover from injury. A moment of focus restores your vitality.",
             source=AbilitySource.MARTIAL,
             mechanism=MechanismType.COOLDOWN,
             mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
             healing=HealingEffect(dice="1d10", flat_amount=1),
             targeting=Targeting(type=TargetingType.SELF),
             action_cost="bonus",
+            tags=["recovery", "healing", "self"],
         )
 
-        power_strike = Ability(
-            name="Power Strike",
-            description="A powerful melee attack that deals extra damage.",
+        steel_your_nerves = Ability(
+            name="Steel Your Nerves",
+            description="Center yourself and shake off the weight of fear and doubt. You regain your composure.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.COOLDOWN,
+            mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="action",
+            tags=["recovery", "stress", "mental"],
+        )
+
+        # =================================================================
+        # Offensive Abilities
+        # =================================================================
+
+        mighty_blow = Ability(
+            name="Mighty Blow",
+            description="Channel everything into a single devastating strike. Raw power overwhelming defense.",
             source=AbilitySource.MARTIAL,
             mechanism=MechanismType.FREE,
             mechanism_details={},
             damage=DamageEffect(dice="1d8", damage_type="bludgeoning"),
             targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
             action_cost="action",
+            tags=["attack", "power", "melee"],
         )
 
-        # Create resources with abilities and a stress/momentum pool
+        sweeping_strike = Ability(
+            name="Sweeping Strike",
+            description="A wide, arcing attack that catches multiple foes. Momentum carries through each target.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+            tags=["attack", "area", "momentum"],
+        )
+
+        exploit_weakness = Ability(
+            name="Exploit Weakness",
+            description="Find the gap in their guard, the flaw in their system, the crack in their confidence. Strike true.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            damage=DamageEffect(dice="2d6", damage_type="piercing"),
+            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
+            action_cost="free",
+            tags=["attack", "precision", "tactical"],
+            prerequisites=["Target must be distracted or vulnerable"],
+        )
+
+        # =================================================================
+        # Defensive Abilities
+        # =================================================================
+
+        brace_for_impact = Ability(
+            name="Brace for Impact",
+            description="Prepare yourself to absorb incoming punishment. Set your stance, raise your guard, steel your resolve.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            stat_modifiers=[
+                StatModifierEffect(
+                    stat="ac",
+                    modifier=2,
+                    duration_type="rounds",
+                    duration_value=1,
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="bonus",
+            tags=["defensive", "protection", "stance"],
+        )
+
+        slip_away = Ability(
+            name="Slip Away",
+            description="Extract yourself from danger with practiced ease. They reach for you, but you're already gone.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="bonus",
+            tags=["defensive", "movement", "evasion"],
+        )
+
+        # =================================================================
+        # Control Abilities
+        # =================================================================
+
+        dirty_trick = Ability(
+            name="Dirty Trick",
+            description="Fight without honor when survival demands it. Sand in the eyes, a low blow, a sudden distraction.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 3},
+            conditions=[
+                ConditionEffect(
+                    condition="stunned",
+                    duration_type="rounds",
+                    duration_value=1,
+                    save_ability="con",
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
+            action_cost="action",
+            tags=["control", "debuff", "tactical"],
+        )
+
+        # Create resources with narrative-first abilities
         resources = EntityResources(
-            abilities=[second_wind, power_strike],
+            abilities=[
+                # Recovery
+                catch_your_breath,
+                steel_your_nerves,
+                # Offensive
+                mighty_blow,
+                sweeping_strike,
+                exploit_weakness,
+                # Defensive
+                brace_for_impact,
+                slip_away,
+                # Control
+                dirty_trick,
+            ],
             stress_momentum=StressMomentumPool(),
             cooldowns={
-                "Second Wind": CooldownTracker(max_uses=1, current_uses=1, recharge_on_rest="short")
+                "Catch Your Breath": CooldownTracker(
+                    max_uses=1, current_uses=1, recharge_on_rest="short"
+                ),
+                "Steel Your Nerves": CooldownTracker(
+                    max_uses=1, current_uses=1, recharge_on_rest="short"
+                ),
             },
         )
 
