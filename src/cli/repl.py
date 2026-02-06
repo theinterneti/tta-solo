@@ -1882,36 +1882,88 @@ class GameREPL:
         state.engine.dolt.save_entity(entity)
 
     def _create_starter_resources(self) -> EntityResources:
-        """Create starter resources with basic abilities for new characters."""
-        # Create a basic martial character setup
-        second_wind = Ability(
-            name="Second Wind",
-            description="Draw on your stamina to heal yourself.",
+        """Create starter resources with narrative-first abilities.
+
+        These abilities use universe-agnostic names and descriptions.
+        The LLM will narrate HOW they manifest based on the universe's
+        physics overlay and current context.
+        """
+        # =================================================================
+        # Recovery Abilities
+        # =================================================================
+
+        catch_your_breath = Ability(
+            name="Catch Your Breath",
+            description="Draw on your inner reserves to recover from injury. A moment of focus restores your vitality.",
             source=AbilitySource.MARTIAL,
             mechanism=MechanismType.COOLDOWN,
             mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
             healing=HealingEffect(dice="1d10", flat_amount=1),
             targeting=Targeting(type=TargetingType.SELF),
             action_cost="bonus",
+            tags=["recovery", "healing", "self"],
         )
 
-        power_strike = Ability(
-            name="Power Strike",
-            description="A powerful melee attack that deals extra damage.",
+        steel_your_nerves = Ability(
+            name="Steel Your Nerves",
+            description="Center yourself and shake off the weight of fear and doubt. You regain your composure.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.COOLDOWN,
+            mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="action",
+            tags=["recovery", "stress", "mental"],
+        )
+
+        # =================================================================
+        # Offensive Abilities
+        # =================================================================
+
+        mighty_blow = Ability(
+            name="Mighty Blow",
+            description="Channel everything into a single devastating strike. Raw power overwhelming defense.",
             source=AbilitySource.MARTIAL,
             mechanism=MechanismType.FREE,
             mechanism_details={},
             damage=DamageEffect(dice="1d8", damage_type="bludgeoning"),
             targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
             action_cost="action",
+            tags=["attack", "power", "melee"],
         )
 
-        # Shield Wall - defensive stance, +2 AC until next turn
-        shield_wall = Ability(
-            name="Shield Wall",
-            description="Raise your shield in a defensive stance, gaining +2 AC until your next turn.",
+        sweeping_strike = Ability(
+            name="Sweeping Strike",
+            description="A wide, arcing attack that catches multiple foes. Momentum carries through each target.",
             source=AbilitySource.MARTIAL,
-            subtype="stance",
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+            tags=["attack", "area", "momentum"],
+        )
+
+        exploit_weakness = Ability(
+            name="Exploit Weakness",
+            description="Find the gap in their guard, the flaw in their system, the crack in their confidence. Strike true.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            damage=DamageEffect(dice="2d6", damage_type="piercing"),
+            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
+            action_cost="free",
+            tags=["attack", "precision", "tactical"],
+            prerequisites=["Target must be distracted or vulnerable"],
+        )
+
+        # =================================================================
+        # Defensive Abilities
+        # =================================================================
+
+        brace_for_impact = Ability(
+            name="Brace for Impact",
+            description="Prepare yourself to absorb incoming punishment. Set your stance, raise your guard, steel your resolve.",
+            source=AbilitySource.MARTIAL,
             mechanism=MechanismType.FREE,
             mechanism_details={},
             stat_modifiers=[
@@ -1924,74 +1976,28 @@ class GameREPL:
             ],
             targeting=Targeting(type=TargetingType.SELF),
             action_cost="bonus",
-            tags=["martial", "defensive", "stance"],
+            tags=["defensive", "protection", "stance"],
         )
 
-        # Cleave - attack two enemies, costs 2 momentum
-        cleave = Ability(
-            name="Cleave",
-            description="Swing your weapon in a wide arc, striking up to 2 adjacent enemies.",
+        slip_away = Ability(
+            name="Slip Away",
+            description="Extract yourself from danger with practiced ease. They reach for you, but you're already gone.",
             source=AbilitySource.MARTIAL,
-            subtype="maneuver",
-            mechanism=MechanismType.MOMENTUM,
-            mechanism_details={"momentum_cost": 2},
-            damage=DamageEffect(dice="1d8", damage_type="slashing"),
-            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
-            action_cost="action",
-            tags=["martial", "attack", "aoe"],
-        )
-
-        # Rally - recover from stress, 1/short rest
-        rally = Ability(
-            name="Rally",
-            description="Steel your nerves and recover from the stress of battle.",
-            source=AbilitySource.MARTIAL,
-            subtype="maneuver",
-            mechanism=MechanismType.COOLDOWN,
-            mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
-            targeting=Targeting(type=TargetingType.SELF),
-            action_cost="action",
-            tags=["martial", "recovery", "stress"],
-        )
-
-        # =================================================================
-        # Rogue Abilities
-        # =================================================================
-
-        # Sneak Attack - bonus damage when enemy is flanked/distracted
-        sneak_attack = Ability(
-            name="Sneak Attack",
-            description="Strike a distracted foe for devastating damage. Deals +2d6 damage when you have advantage or an ally is adjacent to the target.",
-            source=AbilitySource.MARTIAL,
-            subtype="maneuver",
-            mechanism=MechanismType.FREE,
-            mechanism_details={},
-            damage=DamageEffect(dice="2d6", damage_type="piercing"),
-            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
-            action_cost="free",  # Triggers as part of attack
-            tags=["martial", "rogue", "precision", "sneak"],
-            prerequisites=["Target must be flanked or you must have advantage"],
-        )
-
-        # Disengage - safe withdrawal from combat
-        disengage = Ability(
-            name="Disengage",
-            description="Carefully withdraw from combat. Your movement doesn't provoke opportunity attacks this turn.",
-            source=AbilitySource.MARTIAL,
-            subtype="maneuver",
             mechanism=MechanismType.FREE,
             mechanism_details={},
             targeting=Targeting(type=TargetingType.SELF),
             action_cost="bonus",
-            tags=["martial", "rogue", "movement", "defensive"],
+            tags=["defensive", "movement", "evasion"],
         )
 
-        # Cheap Shot - stun an enemy with a dirty trick
-        cheap_shot = Ability(
-            name="Cheap Shot",
-            description="A dirty trick that stuns your opponent. Throw sand, strike a nerve, or exploit a moment of distraction.",
+        # =================================================================
+        # Control Abilities
+        # =================================================================
+
+        dirty_trick = Ability(
+            name="Dirty Trick",
+            description="Fight without honor when survival demands it. Sand in the eyes, a low blow, a sudden distraction.",
             source=AbilitySource.MARTIAL,
-            subtype="maneuver",
             mechanism=MechanismType.MOMENTUM,
             mechanism_details={"momentum_cost": 3},
             conditions=[
@@ -2004,29 +2010,33 @@ class GameREPL:
             ],
             targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
             action_cost="action",
-            tags=["martial", "rogue", "control", "dirty"],
+            tags=["control", "debuff", "tactical"],
         )
 
-        # Create resources with abilities and a stress/momentum pool
+        # Create resources with narrative-first abilities
         resources = EntityResources(
             abilities=[
-                # Fighter
-                second_wind,
-                power_strike,
-                shield_wall,
-                cleave,
-                rally,
-                # Rogue
-                sneak_attack,
-                disengage,
-                cheap_shot,
+                # Recovery
+                catch_your_breath,
+                steel_your_nerves,
+                # Offensive
+                mighty_blow,
+                sweeping_strike,
+                exploit_weakness,
+                # Defensive
+                brace_for_impact,
+                slip_away,
+                # Control
+                dirty_trick,
             ],
             stress_momentum=StressMomentumPool(),
             cooldowns={
-                "Second Wind": CooldownTracker(
+                "Catch Your Breath": CooldownTracker(
                     max_uses=1, current_uses=1, recharge_on_rest="short"
                 ),
-                "Rally": CooldownTracker(max_uses=1, current_uses=1, recharge_on_rest="short"),
+                "Steel Your Nerves": CooldownTracker(
+                    max_uses=1, current_uses=1, recharge_on_rest="short"
+                ),
             },
         )
 
