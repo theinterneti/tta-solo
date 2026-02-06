@@ -8,6 +8,7 @@ from src.models.ability import (
     DamageEffect,
     HealingEffect,
     MechanismType,
+    StatModifierEffect,
     Targeting,
     TargetingType,
 )
@@ -199,3 +200,145 @@ class TestStarterAbilities:
         assert power_strike.damage.dice == "1d8"
         assert power_strike.damage.damage_type == "bludgeoning"
         assert power_strike.targeting.range_ft == 5
+
+    def test_shield_wall_ability(self):
+        """Test Shield Wall ability properties - defensive stance with +2 AC."""
+        shield_wall = Ability(
+            name="Shield Wall",
+            description="Raise your shield in a defensive stance, gaining +2 AC until your next turn.",
+            source=AbilitySource.MARTIAL,
+            subtype="stance",
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            stat_modifiers=[
+                StatModifierEffect(
+                    stat="ac",
+                    modifier=2,
+                    duration_type="rounds",
+                    duration_value=1,
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="bonus",
+            tags=["martial", "defensive", "stance"],
+        )
+
+        assert shield_wall.name == "Shield Wall"
+        assert shield_wall.source == AbilitySource.MARTIAL
+        assert shield_wall.mechanism == MechanismType.FREE
+        assert shield_wall.action_cost == "bonus"
+        assert len(shield_wall.stat_modifiers) == 1
+        assert shield_wall.stat_modifiers[0].stat == "ac"
+        assert shield_wall.stat_modifiers[0].modifier == 2
+        assert shield_wall.stat_modifiers[0].duration_type == "rounds"
+        assert shield_wall.stat_modifiers[0].duration_value == 1
+        assert "defensive" in shield_wall.tags
+
+    def test_cleave_ability(self):
+        """Test Cleave ability properties - multi-target attack costing momentum."""
+        cleave = Ability(
+            name="Cleave",
+            description="Swing your weapon in a wide arc, striking up to 2 adjacent enemies.",
+            source=AbilitySource.MARTIAL,
+            subtype="maneuver",
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+            tags=["martial", "attack", "aoe"],
+        )
+
+        assert cleave.name == "Cleave"
+        assert cleave.source == AbilitySource.MARTIAL
+        assert cleave.mechanism == MechanismType.MOMENTUM
+        assert cleave.mechanism_details["momentum_cost"] == 2
+        assert cleave.damage is not None
+        assert cleave.damage.dice == "1d8"
+        assert cleave.damage.damage_type == "slashing"
+        assert cleave.targeting.type == TargetingType.MULTIPLE
+        assert cleave.targeting.max_targets == 2
+        assert "aoe" in cleave.tags
+
+    def test_rally_ability(self):
+        """Test Rally ability properties - stress recovery ability."""
+        rally = Ability(
+            name="Rally",
+            description="Steel your nerves and recover from the stress of battle.",
+            source=AbilitySource.MARTIAL,
+            subtype="maneuver",
+            mechanism=MechanismType.COOLDOWN,
+            mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="action",
+            tags=["martial", "recovery", "stress"],
+        )
+
+        assert rally.name == "Rally"
+        assert rally.source == AbilitySource.MARTIAL
+        assert rally.mechanism == MechanismType.COOLDOWN
+        assert rally.mechanism_details["max_uses"] == 1
+        assert rally.mechanism_details["recharge_on_rest"] == "short"
+        assert rally.targeting.type == TargetingType.SELF
+        assert "stress" in rally.tags
+        assert "recovery" in rally.tags
+
+
+class TestRallyStressRecovery:
+    """Test Rally ability's stress recovery functionality."""
+
+    def test_rally_reduces_stress(self):
+        """Test that Rally reduces stress by 1."""
+        pool = StressMomentumPool(stress=3, stress_max=10)
+        reduced = pool.reduce_stress(1)
+
+        assert reduced == 1
+        assert pool.stress == 2
+
+    def test_rally_at_zero_stress(self):
+        """Test Rally when already at zero stress."""
+        pool = StressMomentumPool(stress=0, stress_max=10)
+        reduced = pool.reduce_stress(1)
+
+        assert reduced == 0
+        assert pool.stress == 0
+
+
+class TestCleaveMultiTarget:
+    """Test Cleave ability's multi-target mechanics."""
+
+    def test_cleave_targets_multiple(self):
+        """Test that Cleave can target multiple enemies."""
+        cleave = Ability(
+            name="Cleave",
+            description="Attack up to 2 enemies.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+        )
+
+        assert cleave.targeting.type == TargetingType.MULTIPLE
+        assert cleave.targeting.max_targets == 2
+
+    def test_cleave_momentum_cost(self):
+        """Test that Cleave costs 2 momentum."""
+        pool = StressMomentumPool(momentum=3, momentum_max=5)
+
+        # Spend momentum for Cleave
+        success = pool.spend_momentum(2)
+
+        assert success
+        assert pool.momentum == 1
+
+    def test_cleave_insufficient_momentum(self):
+        """Test that Cleave fails without enough momentum."""
+        pool = StressMomentumPool(momentum=1, momentum_max=5)
+
+        # Try to spend 2 momentum with only 1
+        success = pool.spend_momentum(2)
+
+        assert not success
+        assert pool.momentum == 1  # Unchanged

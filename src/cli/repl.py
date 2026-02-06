@@ -23,6 +23,7 @@ from src.models.ability import (
     DamageEffect,
     HealingEffect,
     MechanismType,
+    StatModifierEffect,
     Targeting,
     TargetingType,
 )
@@ -1164,6 +1165,12 @@ class GameREPL:
                 if ability.healing.flat_amount:
                     heal_str += f"+{ability.healing.flat_amount}"
                 effect_parts.append(f"heal {heal_str}")
+            if ability.stat_modifiers:
+                for mod in ability.stat_modifiers:
+                    sign = "+" if mod.modifier > 0 else ""
+                    effect_parts.append(f"{sign}{mod.modifier} {mod.stat.upper()}")
+            if "stress" in ability.tags:
+                effect_parts.append("-1 stress")
 
             effect_str = ", ".join(effect_parts) if effect_parts else "utility"
 
@@ -1286,27 +1293,66 @@ class GameREPL:
         lines = []
         lines.append(f"You use {ability.name}!")
 
-        # Roll for effect
-        total_damage = 0
-        total_healing = 0
+        # Handle stat modifiers (e.g., Shield Wall's +2 AC)
+        if ability.stat_modifiers:
+            for mod in ability.stat_modifiers:
+                sign = "+" if mod.modifier > 0 else ""
+                duration = ""
+                if mod.duration_type == "rounds" and mod.duration_value:
+                    duration = (
+                        f" for {mod.duration_value} round{'s' if mod.duration_value > 1 else ''}"
+                    )
+                elif mod.duration_type == "concentration":
+                    duration = " (concentration)"
+                lines.append(f"  {mod.stat.upper()} {sign}{mod.modifier}{duration}")
 
+        # Handle stress recovery (Rally ability)
+        if "stress" in ability.tags and state.resources and state.resources.stress_momentum:
+            pool = state.resources.stress_momentum
+            if pool.stress > 0:
+                reduced = pool.reduce_stress(1)
+                lines.append(
+                    f"  Stress reduced by {reduced}! (Stress: {pool.stress}/{pool.stress_max})"
+                )
+            else:
+                lines.append("  You're already calm and focused.")
+
+        # Handle damage abilities
         if ability.damage:
             damage_roll = self._roll_dice(ability.damage.dice)
-            total_damage = damage_roll
             lines.append(f"  Damage: {damage_roll} {ability.damage.damage_type}")
 
-            if target and target.stats:
-                # Apply damage to target
-                target.stats.hp_current = max(0, target.stats.hp_current - total_damage)
+            # For multi-target abilities (like Cleave), get multiple targets
+            if ability.targeting.type == TargetingType.MULTIPLE:
+                targets = self._get_multiple_targets(state, ability.targeting.max_targets or 2)
+                if targets:
+                    for t in targets:
+                        if t.stats:
+                            t.stats.hp_current = max(0, t.stats.hp_current - damage_roll)
+                            state.engine.dolt.save_entity(t)
+                            if t.stats.hp_current <= 0:
+                                lines.append(f"  {t.name} is defeated!")
+                                self._remove_entity_from_location(state, t)
+                            else:
+                                lines.append(
+                                    f"  {t.name} takes {damage_roll} damage! "
+                                    f"({t.stats.hp_current}/{t.stats.hp_max} HP)"
+                                )
+                else:
+                    lines.append("  No enemies in range!")
+            elif target and target.stats:
+                # Single target damage
+                target.stats.hp_current = max(0, target.stats.hp_current - damage_roll)
                 state.engine.dolt.save_entity(target)
                 if target.stats.hp_current <= 0:
                     lines.append(f"  {target.name} is defeated!")
                 else:
                     lines.append(
-                        f"  {target.name} takes {total_damage} damage! "
+                        f"  {target.name} takes {damage_roll} damage! "
                         f"({target.stats.hp_current}/{target.stats.hp_max} HP)"
                     )
 
+        # Handle healing abilities
         if ability.healing:
             if ability.healing.dice:
                 heal_roll = self._roll_dice(ability.healing.dice)
@@ -1332,11 +1378,17 @@ class GameREPL:
                     f"({heal_target.stats.hp_current}/{heal_target.stats.hp_max} HP)"
                 )
 
+        # Handle conditions
         if ability.conditions:
             cond_names = [c.condition for c in ability.conditions]
             lines.append(f"  Conditions applied: {', '.join(cond_names)}")
 
         return "\n".join(lines)
+
+    def _get_multiple_targets(self, state: GameState, max_targets: int) -> list[Entity]:
+        """Get multiple enemy targets for AoE abilities like Cleave."""
+        enemies = self._get_enemies_at_location(state)
+        return enemies[:max_targets]
 
     def _roll_dice(self, dice_str: str) -> int:
         """Roll dice from a string like '2d6' or '1d10+5'."""
@@ -1835,12 +1887,63 @@ class GameREPL:
             action_cost="action",
         )
 
+        # Shield Wall - defensive stance, +2 AC until next turn
+        shield_wall = Ability(
+            name="Shield Wall",
+            description="Raise your shield in a defensive stance, gaining +2 AC until your next turn.",
+            source=AbilitySource.MARTIAL,
+            subtype="stance",
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            stat_modifiers=[
+                StatModifierEffect(
+                    stat="ac",
+                    modifier=2,
+                    duration_type="rounds",
+                    duration_value=1,
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="bonus",
+            tags=["martial", "defensive", "stance"],
+        )
+
+        # Cleave - attack two enemies, costs 2 momentum
+        cleave = Ability(
+            name="Cleave",
+            description="Swing your weapon in a wide arc, striking up to 2 adjacent enemies.",
+            source=AbilitySource.MARTIAL,
+            subtype="maneuver",
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+            tags=["martial", "attack", "aoe"],
+        )
+
+        # Rally - recover from stress, 1/short rest
+        rally = Ability(
+            name="Rally",
+            description="Steel your nerves and recover from the stress of battle.",
+            source=AbilitySource.MARTIAL,
+            subtype="maneuver",
+            mechanism=MechanismType.COOLDOWN,
+            mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="action",
+            tags=["martial", "recovery", "stress"],
+        )
+
         # Create resources with abilities and a stress/momentum pool
         resources = EntityResources(
-            abilities=[second_wind, power_strike],
+            abilities=[second_wind, power_strike, shield_wall, cleave, rally],
             stress_momentum=StressMomentumPool(),
             cooldowns={
-                "Second Wind": CooldownTracker(max_uses=1, current_uses=1, recharge_on_rest="short")
+                "Second Wind": CooldownTracker(
+                    max_uses=1, current_uses=1, recharge_on_rest="short"
+                ),
+                "Rally": CooldownTracker(max_uses=1, current_uses=1, recharge_on_rest="short"),
             },
         )
 
