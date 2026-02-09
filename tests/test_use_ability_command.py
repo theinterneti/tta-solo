@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from src.models.ability import (
     Ability,
     AbilitySource,
+    ConditionEffect,
     DamageEffect,
     HealingEffect,
     MechanismType,
+    StatModifierEffect,
     Targeting,
     TargetingType,
 )
+from src.models.condition import ActiveEffect, DurationType, ModifierType
 from src.models.resources import CooldownTracker, EntityResources, StressMomentumPool
 
 
@@ -155,47 +160,425 @@ class TestAbilityResourceTracking:
         assert resources.stress_momentum.stress == 5
 
 
-class TestStarterAbilities:
-    """Test that starter abilities are properly configured."""
+class TestNarrativeAbilities:
+    """Test narrative-first abilities - universe-agnostic names and effects."""
 
-    def test_second_wind_ability(self):
-        """Test Second Wind ability properties."""
-        second_wind = Ability(
-            name="Second Wind",
-            description="Draw on your stamina to heal yourself.",
+    # =========================================================================
+    # Recovery Abilities
+    # =========================================================================
+
+    def test_catch_your_breath_ability(self):
+        """Test Catch Your Breath - recovery ability."""
+        ability = Ability(
+            name="Catch Your Breath",
+            description="Draw on your inner reserves to recover from injury.",
             source=AbilitySource.MARTIAL,
             mechanism=MechanismType.COOLDOWN,
             mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
             healing=HealingEffect(dice="1d10", flat_amount=1),
             targeting=Targeting(type=TargetingType.SELF),
             action_cost="bonus",
+            tags=["recovery", "healing", "self"],
         )
 
-        assert second_wind.name == "Second Wind"
-        assert second_wind.source == AbilitySource.MARTIAL
-        assert second_wind.mechanism == MechanismType.COOLDOWN
-        assert second_wind.healing is not None
-        assert second_wind.healing.dice == "1d10"
-        assert second_wind.healing.flat_amount == 1
-        assert second_wind.targeting.type == TargetingType.SELF
+        assert ability.name == "Catch Your Breath"
+        assert ability.mechanism == MechanismType.COOLDOWN
+        assert ability.healing is not None
+        assert ability.healing.dice == "1d10"
+        assert "recovery" in ability.tags
 
-    def test_power_strike_ability(self):
-        """Test Power Strike ability properties."""
-        power_strike = Ability(
-            name="Power Strike",
-            description="A powerful melee attack that deals extra damage.",
+    def test_steel_your_nerves_ability(self):
+        """Test Steel Your Nerves - stress recovery ability."""
+        ability = Ability(
+            name="Steel Your Nerves",
+            description="Center yourself and shake off fear and doubt.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.COOLDOWN,
+            mechanism_details={"max_uses": 1, "recharge_on_rest": "short"},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="action",
+            tags=["recovery", "stress", "mental"],
+        )
+
+        assert ability.name == "Steel Your Nerves"
+        assert ability.mechanism == MechanismType.COOLDOWN
+        assert "stress" in ability.tags
+        assert "recovery" in ability.tags
+
+    # =========================================================================
+    # Offensive Abilities
+    # =========================================================================
+
+    def test_mighty_blow_ability(self):
+        """Test Mighty Blow - powerful attack."""
+        ability = Ability(
+            name="Mighty Blow",
+            description="Channel everything into a devastating strike.",
             source=AbilitySource.MARTIAL,
             mechanism=MechanismType.FREE,
             mechanism_details={},
             damage=DamageEffect(dice="1d8", damage_type="bludgeoning"),
             targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
             action_cost="action",
+            tags=["attack", "power", "melee"],
         )
 
-        assert power_strike.name == "Power Strike"
-        assert power_strike.source == AbilitySource.MARTIAL
-        assert power_strike.mechanism == MechanismType.FREE
-        assert power_strike.damage is not None
-        assert power_strike.damage.dice == "1d8"
-        assert power_strike.damage.damage_type == "bludgeoning"
-        assert power_strike.targeting.range_ft == 5
+        assert ability.name == "Mighty Blow"
+        assert ability.damage is not None
+        assert ability.damage.dice == "1d8"
+        assert "attack" in ability.tags
+
+    def test_sweeping_strike_ability(self):
+        """Test Sweeping Strike - multi-target attack."""
+        ability = Ability(
+            name="Sweeping Strike",
+            description="A wide attack catching multiple foes.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+            tags=["attack", "area", "momentum"],
+        )
+
+        assert ability.name == "Sweeping Strike"
+        assert ability.mechanism == MechanismType.MOMENTUM
+        assert ability.mechanism_details["momentum_cost"] == 2
+        assert ability.targeting.type == TargetingType.MULTIPLE
+        assert ability.targeting.max_targets == 2
+        assert "area" in ability.tags
+
+    def test_exploit_weakness_ability(self):
+        """Test Exploit Weakness - precision damage."""
+        ability = Ability(
+            name="Exploit Weakness",
+            description="Find the gap and strike true.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            damage=DamageEffect(dice="2d6", damage_type="piercing"),
+            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
+            action_cost="free",
+            tags=["attack", "precision", "tactical"],
+            prerequisites=["Target must be distracted or vulnerable"],
+        )
+
+        assert ability.name == "Exploit Weakness"
+        assert ability.damage is not None
+        assert ability.damage.dice == "2d6"
+        assert "precision" in ability.tags
+        assert len(ability.prerequisites) == 1
+
+    # =========================================================================
+    # Defensive Abilities
+    # =========================================================================
+
+    def test_brace_for_impact_ability(self):
+        """Test Brace for Impact - defensive stance."""
+        ability = Ability(
+            name="Brace for Impact",
+            description="Prepare to absorb punishment.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            stat_modifiers=[
+                StatModifierEffect(
+                    stat="ac",
+                    modifier=2,
+                    duration_type="rounds",
+                    duration_value=1,
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="bonus",
+            tags=["defensive", "protection", "stance"],
+        )
+
+        assert ability.name == "Brace for Impact"
+        assert len(ability.stat_modifiers) == 1
+        assert ability.stat_modifiers[0].stat == "ac"
+        assert ability.stat_modifiers[0].modifier == 2
+        assert "defensive" in ability.tags
+
+    def test_slip_away_ability(self):
+        """Test Slip Away - evasion ability."""
+        ability = Ability(
+            name="Slip Away",
+            description="Extract yourself from danger.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.FREE,
+            mechanism_details={},
+            targeting=Targeting(type=TargetingType.SELF),
+            action_cost="bonus",
+            tags=["defensive", "movement", "evasion"],
+        )
+
+        assert ability.name == "Slip Away"
+        assert ability.action_cost == "bonus"
+        assert "movement" in ability.tags
+        assert "evasion" in ability.tags
+
+    # =========================================================================
+    # Control Abilities
+    # =========================================================================
+
+    def test_dirty_trick_ability(self):
+        """Test Dirty Trick - control/stun ability."""
+        ability = Ability(
+            name="Dirty Trick",
+            description="Fight without honor when survival demands it.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 3},
+            conditions=[
+                ConditionEffect(
+                    condition="stunned",
+                    duration_type="rounds",
+                    duration_value=1,
+                    save_ability="con",
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
+            action_cost="action",
+            tags=["control", "debuff", "tactical"],
+        )
+
+        assert ability.name == "Dirty Trick"
+        assert ability.mechanism == MechanismType.MOMENTUM
+        assert ability.mechanism_details["momentum_cost"] == 3
+        assert len(ability.conditions) == 1
+        assert ability.conditions[0].condition == "stunned"
+        assert "control" in ability.tags
+
+
+class TestStressRecovery:
+    """Test stress recovery mechanics."""
+
+    def test_stress_reduces(self):
+        """Test that stress can be reduced."""
+        pool = StressMomentumPool(stress=3, stress_max=10)
+        reduced = pool.reduce_stress(1)
+
+        assert reduced == 1
+        assert pool.stress == 2
+
+    def test_stress_at_zero(self):
+        """Test stress reduction when already at zero."""
+        pool = StressMomentumPool(stress=0, stress_max=10)
+        reduced = pool.reduce_stress(1)
+
+        assert reduced == 0
+        assert pool.stress == 0
+
+
+class TestMultiTargetAbilities:
+    """Test multi-target ability mechanics (Sweeping Strike)."""
+
+    def test_sweeping_strike_targets_multiple(self):
+        """Test that Sweeping Strike can target multiple enemies."""
+        ability = Ability(
+            name="Sweeping Strike",
+            description="Attack up to 2 enemies.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 2},
+            damage=DamageEffect(dice="1d8", damage_type="slashing"),
+            targeting=Targeting(type=TargetingType.MULTIPLE, range_ft=5, max_targets=2),
+            action_cost="action",
+        )
+
+        assert ability.targeting.type == TargetingType.MULTIPLE
+        assert ability.targeting.max_targets == 2
+
+    def test_sweeping_strike_momentum_cost(self):
+        """Test that Sweeping Strike costs 2 momentum."""
+        pool = StressMomentumPool(momentum=3, momentum_max=5)
+
+        success = pool.spend_momentum(2)
+
+        assert success
+        assert pool.momentum == 1
+
+    def test_sweeping_strike_insufficient_momentum(self):
+        """Test that Sweeping Strike fails without enough momentum."""
+        pool = StressMomentumPool(momentum=1, momentum_max=5)
+
+        success = pool.spend_momentum(2)
+
+        assert not success
+        assert pool.momentum == 1
+
+
+class TestControlAbilities:
+    """Test control ability mechanics (Dirty Trick)."""
+
+    def test_dirty_trick_stun(self):
+        """Test Dirty Trick applies stun condition."""
+        ability = Ability(
+            name="Dirty Trick",
+            description="Stun your opponent.",
+            source=AbilitySource.MARTIAL,
+            mechanism=MechanismType.MOMENTUM,
+            mechanism_details={"momentum_cost": 3},
+            conditions=[
+                ConditionEffect(
+                    condition="stunned",
+                    duration_type="rounds",
+                    duration_value=1,
+                    save_ability="con",
+                )
+            ],
+            targeting=Targeting(type=TargetingType.SINGLE, range_ft=5),
+            action_cost="action",
+            tags=["control", "debuff", "tactical"],
+        )
+
+        assert ability.name == "Dirty Trick"
+        assert ability.mechanism == MechanismType.MOMENTUM
+        assert ability.mechanism_details["momentum_cost"] == 3
+        assert len(ability.conditions) == 1
+        assert ability.conditions[0].condition == "stunned"
+        assert "control" in ability.tags
+
+    def test_dirty_trick_costs_3_momentum(self):
+        """Test that Dirty Trick requires 3 momentum."""
+        pool = StressMomentumPool(momentum=4, momentum_max=5)
+
+        success = pool.spend_momentum(3)
+
+        assert success
+        assert pool.momentum == 1
+
+    def test_dirty_trick_insufficient_momentum(self):
+        """Test Dirty Trick fails without enough momentum."""
+        pool = StressMomentumPool(momentum=2, momentum_max=5)
+
+        success = pool.spend_momentum(3)
+
+        assert not success
+        assert pool.momentum == 2
+
+    def test_dirty_trick_exactly_3_momentum(self):
+        """Test Dirty Trick with exactly 3 momentum."""
+        pool = StressMomentumPool(momentum=3, momentum_max=5)
+
+        success = pool.spend_momentum(3)
+
+        assert success
+        assert pool.momentum == 0
+
+
+class TestActiveEffectPersistence:
+    """Test that stat modifiers create persistent ActiveEffect objects."""
+
+    def test_active_effect_creation(self):
+        """Test creating an ActiveEffect from a stat modifier."""
+        entity_id = uuid4()
+        universe_id = uuid4()
+
+        effect = ActiveEffect(
+            entity_id=entity_id,
+            universe_id=universe_id,
+            stat="ac",
+            modifier=2,
+            modifier_type=ModifierType.BONUS,
+            duration_type=DurationType.ROUNDS,
+            duration_remaining=1,
+        )
+
+        assert effect.stat == "ac"
+        assert effect.modifier == 2
+        assert effect.modifier_type == ModifierType.BONUS
+        assert effect.duration_remaining == 1
+
+    def test_active_effect_tick_expires(self):
+        """Test that ActiveEffect expires after ticking through duration."""
+        effect = ActiveEffect(
+            entity_id=uuid4(),
+            universe_id=uuid4(),
+            stat="ac",
+            modifier=2,
+            modifier_type=ModifierType.BONUS,
+            duration_type=DurationType.ROUNDS,
+            duration_remaining=1,
+        )
+
+        expired = effect.tick()
+
+        assert expired
+        assert effect.duration_remaining == 0
+
+    def test_active_effect_tick_not_expired(self):
+        """Test that ActiveEffect persists when duration remaining."""
+        effect = ActiveEffect(
+            entity_id=uuid4(),
+            universe_id=uuid4(),
+            stat="ac",
+            modifier=2,
+            modifier_type=ModifierType.BONUS,
+            duration_type=DurationType.ROUNDS,
+            duration_remaining=3,
+        )
+
+        expired = effect.tick()
+
+        assert not expired
+        assert effect.duration_remaining == 2
+
+    def test_active_effect_apply_bonus(self):
+        """Test applying a bonus modifier to a stat value."""
+        effect = ActiveEffect(
+            entity_id=uuid4(),
+            universe_id=uuid4(),
+            stat="ac",
+            modifier=2,
+            modifier_type=ModifierType.BONUS,
+            duration_type=DurationType.ROUNDS,
+            duration_remaining=1,
+        )
+
+        result = effect.apply_to_stat(14)
+
+        assert result == 16
+
+    def test_active_effect_apply_penalty(self):
+        """Test applying a penalty modifier to a stat value."""
+        effect = ActiveEffect(
+            entity_id=uuid4(),
+            universe_id=uuid4(),
+            stat="ac",
+            modifier=2,
+            modifier_type=ModifierType.PENALTY,
+            duration_type=DurationType.ROUNDS,
+            duration_remaining=1,
+        )
+
+        result = effect.apply_to_stat(14)
+
+        assert result == 12
+
+    def test_stat_modifier_to_active_effect_mapping(self):
+        """Test that ability stat modifiers map correctly to ActiveEffect fields."""
+        mod = StatModifierEffect(
+            stat="ac",
+            modifier=2,
+            duration_type="rounds",
+            duration_value=1,
+        )
+
+        # Verify the mapping from ability model to condition model
+        effect = ActiveEffect(
+            entity_id=uuid4(),
+            universe_id=uuid4(),
+            stat=mod.stat,
+            modifier=mod.modifier,
+            modifier_type=ModifierType.BONUS if mod.modifier > 0 else ModifierType.PENALTY,
+            duration_type=DurationType.ROUNDS,
+            duration_remaining=mod.duration_value,
+        )
+
+        assert effect.stat == "ac"
+        assert effect.modifier == 2
+        assert effect.modifier_type == ModifierType.BONUS
+        assert effect.duration_remaining == 1
