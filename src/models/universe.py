@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -56,6 +57,17 @@ class Universe(BaseModel):
 
     # Dolt integration
     branch_name: str = Field(default="", description="Corresponding Dolt branch name")
+
+    # Universe generation (optional for backwards compat)
+    template_id: UUID | None = Field(
+        default=None, description="Which UniverseTemplate generated this"
+    )
+    physics_overlay_key: str = Field(
+        default="high_fantasy", description="Physics overlay for this universe"
+    )
+    world_context: dict[str, Any] = Field(
+        default_factory=dict, description="LLM-generated worldbuilding as freeform JSON"
+    )
 
     def is_prime_material(self) -> bool:
         """Check if this is the root/canonical universe."""

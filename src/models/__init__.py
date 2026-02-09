@@ -156,6 +156,10 @@ from src.models.universe import (
     create_prime_material,
     create_shared_adventure,
 )
+from src.models.universe_template import (
+    FactionSeed,
+    UniverseTemplate,
+)
 
 __all__ = [
     # Ability (UAO)
@@ -241,6 +245,9 @@ __all__ = [
     "create_prime_material",
     "create_fork",
     "create_shared_adventure",
+    # Universe Template
+    "UniverseTemplate",
+    "FactionSeed",
     # Relationships
     "Relationship",
     "RelationshipType",

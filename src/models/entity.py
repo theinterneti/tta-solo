@@ -104,6 +104,18 @@ class LocationProperties(BaseModel):
     is_dungeon: bool = False
     danger_level: int = Field(default=0, ge=0, le=20, description="0=safe, 20=deadly")
 
+    # Worldbuilding (all optional for backwards compat)
+    controlling_faction_hint: str | None = Field(
+        default=None, description="Which faction controls this location"
+    )
+    cultural_flavor: str | None = Field(
+        default=None, description="Visible cultural markers at this location"
+    )
+    economic_activity: str | None = Field(
+        default=None, description="What economic activity happens here"
+    )
+    atmosphere: str | None = Field(default=None, description="Mood and vibe of this place")
+
 
 class FactionProperties(BaseModel):
     """Properties specific to factions."""
@@ -112,6 +124,25 @@ class FactionProperties(BaseModel):
     influence: int = Field(default=0, ge=0, le=100, description="Political influence 0-100")
     wealth: int = Field(default=0, ge=0, description="Faction wealth in gold pieces")
     member_count: int | None = None
+
+    # Worldbuilding (all optional for backwards compat)
+    core_values: list[str] = Field(default_factory=list, description="What the faction believes in")
+    ideology_summary: str | None = Field(default=None, description="One-line ideology")
+    controls_resources: list[str] = Field(
+        default_factory=list, description="Resources this faction controls"
+    )
+    produces: list[str] = Field(default_factory=list, description="What the faction produces")
+    needs: list[str] = Field(default_factory=list, description="What the faction needs from others")
+    economic_role: str | None = Field(
+        default=None, description="Economic role: producers, traders, raiders"
+    )
+    cultural_traits: list[str] = Field(default_factory=list, description="Visible cultural markers")
+    taboos: list[str] = Field(default_factory=list, description="Cultural prohibitions")
+    aesthetic: str | None = Field(default=None, description="Visual/artistic style")
+    governance: str | None = Field(default=None, description="How they govern: monarchy, council")
+    leader_title: str | None = Field(default=None, description="Title of the leader")
+    territory_description: str | None = Field(default=None, description="Where they live")
+    headquarters: str | None = Field(default=None, description="Name of their base of operations")
 
 
 class Entity(BaseModel):

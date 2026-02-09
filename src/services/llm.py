@@ -241,6 +241,7 @@ class LLMService:
         player_input: str,
         situation: str,
         constraints: list[str] | None = None,
+        universe_context: str = "",
     ) -> str:
         """
         Generate NPC dialogue response.
@@ -259,12 +260,17 @@ class LLMService:
             player_input: What the player said
             situation: Description of current situation
             constraints: Additional constraints (topics to mention/avoid)
+            universe_context: World context for tone/culture consistency
 
         Returns:
             Generated dialogue response
         """
+        # Build world context block
+        world_block = f"\nWORLD CONTEXT:\n{universe_context}\n" if universe_context else ""
+
         # Build system prompt
         system_prompt = f"""You are roleplaying as {npc_name}, {npc_description}.
+{world_block}
 
 PERSONALITY:
 - Speech style: {speech_style}
@@ -303,12 +309,46 @@ Respond as {npc_name}:"""
             temperature=0.7,
         )
 
+    async def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.8,
+    ) -> str:
+        """
+        Generate a structured (JSON) response from the LLM.
+
+        Used for universe generation and other tasks that need higher token
+        budgets and JSON output.
+
+        Args:
+            system_prompt: System prompt defining the JSON schema
+            user_prompt: Creative context for generation
+            max_tokens: Maximum tokens (higher than default 256)
+            temperature: Randomness (0.8 = creative but structured)
+
+        Returns:
+            Raw LLM response (caller parses JSON)
+        """
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        return await self.provider.complete(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
     async def generate_narrative(
         self,
         event_description: str,
         tone: str,
         location: str,
         characters_involved: list[str],
+        universe_context: str = "",
     ) -> str:
         """
         Generate narrative description of an event.
@@ -322,8 +362,9 @@ Respond as {npc_name}:"""
         Returns:
             Narrative description
         """
+        world_block = f"\nWorld context: {universe_context}\n" if universe_context else ""
         system_prompt = f"""You are a narrator for a tabletop RPG game.
-Your tone is {tone}.
+Your tone is {tone}.{world_block}
 Write vivid, engaging descriptions of events.
 Keep responses to 2-4 sentences."""
 
