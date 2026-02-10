@@ -356,6 +356,247 @@ _QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
 }
 
 # Default templates for unknown location types
+# =============================================================================
+# Faction Quest Templates (keyed by relationship type)
+# =============================================================================
+
+_FACTION_QUEST_TEMPLATES: dict[str, list[QuestTemplateData]] = {
+    "TRADES_WITH": [
+        QuestTemplateData(
+            quest_type=QuestType.ESCORT,
+            name_patterns=[
+                "Trade Route Escort",
+                "Guarding the {faction_a} Caravan",
+                "Safe Passage for {faction_b} Goods",
+            ],
+            description_patterns=[
+                "A trade caravan carrying {resource} between {faction_a} and {faction_b} needs protection. Bandits have been targeting the route.",
+                "{faction_a} and {faction_b} have a lucrative trade agreement, but the roads are dangerous. Escort the next shipment safely.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.ESCORT_NPC, "Escort the trade caravan to {territory}"),
+                (ObjectiveType.SURVIVE, "Ensure the goods arrive safely"),
+            ],
+            reward_gold_range=(30, 70),
+            reward_xp_range=(20, 50),
+            tags=["faction", "trade", "escort"],
+        ),
+        QuestTemplateData(
+            quest_type=QuestType.DELIVER,
+            name_patterns=[
+                "Supply Delivery",
+                "Urgent Shipment for {faction_b}",
+                "{faction_a}'s Trade Obligation",
+            ],
+            description_patterns=[
+                "{faction_a} has promised {resource} to {faction_b}, but their usual courier has gone missing. Deliver it before the deal collapses.",
+                "A time-sensitive delivery of {resource} must reach {faction_b} territory. {faction_a} is counting on you.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.COLLECT_ITEM, "Collect the {resource} shipment"),
+                (ObjectiveType.REACH_LOCATION, "Travel to {territory}"),
+                (ObjectiveType.DELIVER_ITEM, "Deliver to {faction_b} representative"),
+            ],
+            reward_gold_range=(25, 55),
+            reward_xp_range=(15, 40),
+            tags=["faction", "trade", "delivery"],
+        ),
+    ],
+    "COMPETES_WITH": [
+        QuestTemplateData(
+            quest_type=QuestType.INVESTIGATE,
+            name_patterns=[
+                "Spy Mission",
+                "Eyes on {faction_b}",
+                "The {faction_a} Intelligence Report",
+            ],
+            description_patterns=[
+                "{faction_a} suspects {faction_b} is planning something. Infiltrate their territory and gather intelligence.",
+                "Tensions between {faction_a} and {faction_b} are rising. Someone needs to find out what {faction_b} is up to.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.REACH_LOCATION, "Infiltrate {faction_b} territory"),
+                (ObjectiveType.DISCOVER_SECRET, "Uncover {faction_b}'s plans"),
+            ],
+            reward_gold_range=(35, 75),
+            reward_xp_range=(25, 55),
+            difficulty_range=(2, 4),
+            tags=["faction", "espionage", "stealth"],
+        ),
+        QuestTemplateData(
+            quest_type=QuestType.HUNT,
+            name_patterns=[
+                "Sabotage Operation",
+                "Strike Against {faction_b}",
+                "Disrupting the Competition",
+            ],
+            description_patterns=[
+                "{faction_a} wants to undermine {faction_b}'s operations. Sabotage their {resource} supply in {territory}.",
+                "The rivalry between {faction_a} and {faction_b} has escalated. Disrupt {faction_b}'s latest venture.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.REACH_LOCATION, "Locate {faction_b}'s operations in {territory}"),
+                (ObjectiveType.DEFEAT_ENEMY, "Deal with {faction_b} guards"),
+                (ObjectiveType.DISCOVER_SECRET, "Sabotage the operation"),
+            ],
+            reward_gold_range=(40, 80),
+            reward_xp_range=(30, 60),
+            difficulty_range=(2, 4),
+            tags=["faction", "sabotage", "combat"],
+        ),
+        QuestTemplateData(
+            quest_type=QuestType.FETCH,
+            name_patterns=[
+                "Intercept Shipment",
+                "{faction_a}'s Heist",
+                "Seize the {resource}",
+            ],
+            description_patterns=[
+                "{faction_b} is transporting {resource} through the area. {faction_a} wants you to intercept it.",
+                "A valuable shipment of {resource} bound for {faction_b} must not reach its destination. {faction_a} will reward you well.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.REACH_LOCATION, "Find the {faction_b} shipment route"),
+                (ObjectiveType.COLLECT_ITEM, "Intercept the {resource}"),
+            ],
+            reward_gold_range=(35, 70),
+            reward_xp_range=(25, 50),
+            difficulty_range=(2, 4),
+            tags=["faction", "theft", "competition"],
+        ),
+    ],
+    "DEPENDS_ON": [
+        QuestTemplateData(
+            quest_type=QuestType.ESCORT,
+            name_patterns=[
+                "Secure the Supply Line",
+                "Protecting {faction_a}'s Lifeline",
+                "The {resource} Road",
+            ],
+            description_patterns=[
+                "{faction_a} depends on {faction_b} for {resource}, but the supply route is under threat. Secure it.",
+                "Without {resource} from {faction_b}, {faction_a} cannot survive. The supply line must be protected.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.REACH_LOCATION, "Patrol the supply route to {territory}"),
+                (ObjectiveType.SURVIVE, "Clear threats along the route"),
+            ],
+            reward_gold_range=(30, 65),
+            reward_xp_range=(20, 50),
+            tags=["faction", "supply", "patrol"],
+        ),
+        QuestTemplateData(
+            quest_type=QuestType.TALK,
+            name_patterns=[
+                "Broker an Alliance",
+                "Diplomatic Mission",
+                "Strengthening the Bond",
+            ],
+            description_patterns=[
+                "{faction_a} needs to strengthen ties with {faction_b}. Carry a diplomatic message to their leaders.",
+                "Relations between {faction_a} and {faction_b} are strained. A mediator is needed to smooth things over.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.TALK_TO_NPC, "Speak with {faction_b} leadership"),
+                (ObjectiveType.TALK_TO_NPC, "Report back to {faction_a}"),
+            ],
+            reward_gold_range=(20, 50),
+            reward_xp_range=(20, 45),
+            tags=["faction", "diplomacy", "social"],
+        ),
+    ],
+    "CONTROLS": [
+        QuestTemplateData(
+            quest_type=QuestType.INVESTIGATE,
+            name_patterns=[
+                "Investigate Corruption",
+                "The {faction_a} Scandal",
+                "Abuse of Power",
+            ],
+            description_patterns=[
+                "Rumors say {faction_a}'s control over {territory} has become oppressive. Investigate the claims.",
+                "{faction_b} suspects {faction_a} is abusing their power over local {resource}. Find the truth.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.REACH_LOCATION, "Visit {territory}"),
+                (ObjectiveType.TALK_TO_NPC, "Question the locals"),
+                (ObjectiveType.DISCOVER_SECRET, "Uncover evidence of corruption"),
+            ],
+            reward_gold_range=(30, 65),
+            reward_xp_range=(25, 55),
+            difficulty_range=(2, 4),
+            tags=["faction", "investigation", "politics"],
+        ),
+        QuestTemplateData(
+            quest_type=QuestType.DELIVER,
+            name_patterns=[
+                "Deliver the Tribute",
+                "{faction_b}'s Obligation",
+                "The Price of Peace",
+            ],
+            description_patterns=[
+                "{faction_b} owes tribute to {faction_a}. Deliver the {resource} before tensions escalate.",
+                "{faction_a} demands {resource} from {faction_b}. Someone must deliver it — or face the consequences.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.COLLECT_ITEM, "Collect the tribute of {resource}"),
+                (ObjectiveType.DELIVER_ITEM, "Deliver to {faction_a} authorities"),
+            ],
+            reward_gold_range=(20, 50),
+            reward_xp_range=(15, 35),
+            tags=["faction", "tribute", "delivery"],
+        ),
+    ],
+    "INFLUENCES": [
+        QuestTemplateData(
+            quest_type=QuestType.INVESTIGATE,
+            name_patterns=[
+                "Gather Intel",
+                "Mapping {faction_a}'s Influence",
+                "The Shadow Network",
+            ],
+            description_patterns=[
+                "{faction_a}'s influence over {faction_b} is growing. Gather intelligence on how deep it runs.",
+                "Someone is pulling strings behind {faction_b}'s decisions. Investigate {faction_a}'s hidden influence.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.TALK_TO_NPC, "Interview contacts about {faction_a}"),
+                (ObjectiveType.DISCOVER_SECRET, "Map the network of influence"),
+            ],
+            reward_gold_range=(25, 60),
+            reward_xp_range=(25, 50),
+            difficulty_range=(2, 4),
+            tags=["faction", "intelligence", "intrigue"],
+        ),
+        QuestTemplateData(
+            quest_type=QuestType.TALK,
+            name_patterns=[
+                "Counter Propaganda",
+                "The Truth Campaign",
+                "Undermining {faction_a}",
+            ],
+            description_patterns=[
+                "{faction_a} is spreading propaganda to sway {faction_b}'s people. Counter their narrative.",
+                "{faction_b} needs someone to expose {faction_a}'s manipulative rhetoric. Spread the truth.",
+            ],
+            objective_patterns=[
+                (ObjectiveType.TALK_TO_NPC, "Speak with influential {faction_b} members"),
+                (ObjectiveType.TALK_TO_NPC, "Rally support against {faction_a}'s narrative"),
+            ],
+            reward_gold_range=(20, 50),
+            reward_xp_range=(20, 45),
+            tags=["faction", "propaganda", "social"],
+        ),
+    ],
+}
+
+# Competitive relationship types where rival faction loses reputation
+_COMPETITIVE_RELATIONSHIPS = {"COMPETES_WITH", "CONTROLS", "INFLUENCES"}
+
+# Reputation reward amounts for faction quests
+_FACTION_REP_POSITIVE = 10
+_FACTION_REP_NEGATIVE = -5
+
 _DEFAULT_TEMPLATES: list[QuestTemplateData] = [
     QuestTemplateData(
         quest_type=QuestType.TALK,
@@ -400,6 +641,17 @@ _DEFAULT_TEMPLATES: list[QuestTemplateData] = [
 # =============================================================================
 
 
+class FactionTension(BaseModel):
+    """A tension between two factions relevant to quest generation."""
+
+    faction_a_name: str
+    faction_b_name: str
+    faction_a_id: UUID
+    faction_b_id: UUID
+    relationship_type: str  # TRADES_WITH, COMPETES_WITH, etc.
+    description: str = ""
+
+
 class QuestContext(BaseModel):
     """Context for generating a quest."""
 
@@ -420,6 +672,15 @@ class QuestContext(BaseModel):
 
     # Player info for scaling
     player_level: int = 1
+
+    # Faction context (all optional, backwards-compatible)
+    controlling_faction: Entity | None = None
+    factions_at_location: list[Entity] = Field(default_factory=list)
+    faction_tensions: list[FactionTension] = Field(default_factory=list)
+    world_context_summary: str = ""
+
+    # Internal: selected tension for template filling (set during _select_template)
+    _selected_tension: FactionTension | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -499,7 +760,15 @@ class QuestService:
         quest_type: QuestType | None = None,
     ) -> QuestTemplateData:
         """Select an appropriate template based on context."""
-        # Get templates for this location type
+        # Try faction templates first (60% chance when tensions exist)
+        if context.faction_tensions and quest_type is None and random.random() < 0.6:
+            tension = random.choice(context.faction_tensions)
+            faction_templates = _FACTION_QUEST_TEMPLATES.get(tension.relationship_type, [])
+            if faction_templates:
+                context._selected_tension = tension
+                return random.choice(faction_templates)
+
+        # Fall back to location-based templates
         templates = _QUEST_TEMPLATES.get(context.location_type, _DEFAULT_TEMPLATES)
 
         # Filter by quest type if specified
@@ -528,14 +797,41 @@ class QuestService:
         context: QuestContext,
     ) -> Quest:
         """Fill a template with context data to create a quest."""
+        tension = context._selected_tension
+
         # Prepare substitution data
         subs: dict[str, str] = {
             "location": context.location_name,
         }
 
-        # Quest giver
+        # Add faction substitutions if tension is active
+        if tension:
+            subs["faction_a"] = tension.faction_a_name
+            subs["faction_b"] = tension.faction_b_name
+
+            # Extract resource from faction properties
+            subs["resource"] = self._get_faction_resource(context, tension.faction_a_id)
+
+            # Extract territory from faction properties
+            subs["territory"] = self._get_faction_territory(context, tension.faction_a_id)
+
+        # Quest giver — prefer faction_a member for faction quests
         if context.giver_name:
             subs["giver"] = context.giver_name
+        elif tension and context.npcs_present:
+            # Try to find an NPC who is a member of faction_a
+            faction_member = self._find_faction_member_npc(
+                context.npcs_present, tension.faction_a_id, context.universe_id
+            )
+            if faction_member:
+                subs["giver"] = faction_member.name
+                context.giver_id = faction_member.id
+                context.giver_name = faction_member.name
+            else:
+                giver = random.choice(context.npcs_present)
+                subs["giver"] = giver.name
+                context.giver_id = giver.id
+                context.giver_name = giver.name
         elif context.npcs_present:
             giver = random.choice(context.npcs_present)
             subs["giver"] = giver.name
@@ -612,9 +908,17 @@ class QuestService:
         gold = int(random.randint(min_gold, max_gold) * difficulty_mult)
         xp = int(random.randint(min_xp, max_xp) * difficulty_mult)
 
+        # Build reputation changes for faction quests
+        reputation_changes: dict[UUID, int] = {}
+        if tension:
+            reputation_changes[tension.faction_a_id] = _FACTION_REP_POSITIVE
+            if tension.relationship_type in _COMPETITIVE_RELATIONSHIPS:
+                reputation_changes[tension.faction_b_id] = _FACTION_REP_NEGATIVE
+
         rewards = QuestReward(
             gold=gold,
             experience=xp,
+            reputation_changes=reputation_changes,
         )
 
         # Calculate difficulty
@@ -634,6 +938,38 @@ class QuestService:
             difficulty=difficulty,
             tags=template.tags.copy(),
         )
+
+    def _get_faction_resource(self, context: QuestContext, faction_id: UUID) -> str:
+        """Get a resource string from a faction's properties."""
+        for faction in context.factions_at_location:
+            if faction.id == faction_id and faction.faction_properties:
+                props = faction.faction_properties
+                all_resources = props.controls_resources + props.produces + props.needs
+                if all_resources:
+                    return random.choice(all_resources)
+        return "goods"
+
+    def _get_faction_territory(self, context: QuestContext, faction_id: UUID) -> str:
+        """Get a territory string from a faction's properties."""
+        for faction in context.factions_at_location:
+            if (
+                faction.id == faction_id
+                and faction.faction_properties
+                and faction.faction_properties.territory_description
+            ):
+                return faction.faction_properties.territory_description
+        return context.location_name
+
+    def _find_faction_member_npc(
+        self, npcs: list[Entity], faction_id: UUID, universe_id: UUID
+    ) -> Entity | None:
+        """Find an NPC who is a MEMBER_OF the given faction."""
+        for npc in npcs:
+            rels = self.neo4j.get_relationships(npc.id, universe_id, relationship_type="MEMBER_OF")
+            for rel in rels:
+                if rel.to_entity_id == faction_id:
+                    return npc
+        return None
 
     def _substitute(self, pattern: str, subs: dict[str, str]) -> str:
         """Substitute placeholders in a pattern."""
@@ -674,6 +1010,26 @@ Objectives:
 """
         for i, obj in enumerate(quest.objectives, 1):
             user_prompt += f"{i}. {obj.description}\n"
+
+        # Add faction context if available
+        if context._selected_tension:
+            tension = context._selected_tension
+            faction_a_values = ""
+            for f in context.factions_at_location:
+                if f.id == tension.faction_a_id and f.faction_properties:
+                    faction_a_values = ", ".join(f.faction_properties.core_values[:3])
+                    break
+            faction_b_values = ""
+            for f in context.factions_at_location:
+                if f.id == tension.faction_b_id and f.faction_properties:
+                    faction_b_values = ", ".join(f.faction_properties.core_values[:3])
+                    break
+            user_prompt += f"""
+Faction Context:
+- {tension.faction_a_name} ({faction_a_values}) {tension.relationship_type} {tension.faction_b_name} ({faction_b_values})
+"""
+            if context.world_context_summary:
+                user_prompt += f"- World: {context.world_context_summary}\n"
 
         user_prompt += """
 Write an enhanced description (2-3 sentences) that:
@@ -955,6 +1311,85 @@ Return ONLY the enhanced description text, nothing else."""
             if giver:
                 giver_name = giver.name
 
+        # Faction context
+        controlling_faction: Entity | None = None
+        factions_at_location: list[Entity] = []
+        faction_tensions: list[FactionTension] = []
+        world_context_summary = ""
+
+        # Get controlling faction from location properties
+        controlling_hint = None
+        if location and location.location_properties:
+            controlling_hint = location.location_properties.controlling_faction_hint
+
+        # Get all factions in this universe
+        all_factions = self.dolt.get_entities_by_type(EntityType.FACTION, universe_id)
+
+        if all_factions:
+            # Find controlling faction by name hint
+            if controlling_hint:
+                for f in all_factions:
+                    if f.name.lower() == controlling_hint.lower():
+                        controlling_faction = f
+                        break
+
+            # All factions are considered "at location" for tension purposes
+            factions_at_location = all_factions
+
+            # Build faction tensions from Neo4j relationships
+            faction_rel_types = {
+                "TRADES_WITH",
+                "COMPETES_WITH",
+                "DEPENDS_ON",
+                "CONTROLS",
+                "INFLUENCES",
+            }
+            seen_pairs: set[tuple[UUID, UUID]] = set()
+            for faction in all_factions:
+                rels = self.neo4j.get_relationships(
+                    faction.id,
+                    universe_id,
+                )
+                for rel in rels:
+                    if rel.relationship_type not in faction_rel_types:
+                        continue
+                    pair = (rel.from_entity_id, rel.to_entity_id)
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+
+                    # Resolve names
+                    a_name = faction.name if rel.from_entity_id == faction.id else ""
+                    b_name = faction.name if rel.to_entity_id == faction.id else ""
+                    if not a_name:
+                        for f in all_factions:
+                            if f.id == rel.from_entity_id:
+                                a_name = f.name
+                                break
+                    if not b_name:
+                        for f in all_factions:
+                            if f.id == rel.to_entity_id:
+                                b_name = f.name
+                                break
+
+                    if a_name and b_name:
+                        faction_tensions.append(
+                            FactionTension(
+                                faction_a_name=a_name,
+                                faction_b_name=b_name,
+                                faction_a_id=rel.from_entity_id,
+                                faction_b_id=rel.to_entity_id,
+                                relationship_type=str(rel.relationship_type),
+                                description=rel.description,
+                            )
+                        )
+
+        # Get world context summary from universe
+        universe = self.dolt.get_universe(universe_id)
+        if universe and universe.world_context:
+            wc = universe.world_context
+            world_context_summary = wc.get("history", wc.get("summary", ""))
+
         return QuestContext(
             universe_id=universe_id,
             location_id=location_id,
@@ -965,4 +1400,8 @@ Return ONLY the enhanced description text, nothing else."""
             connected_locations=connected_locations,
             giver_id=giver_id,
             giver_name=giver_name,
+            controlling_faction=controlling_faction,
+            factions_at_location=factions_at_location,
+            faction_tensions=faction_tensions,
+            world_context_summary=world_context_summary,
         )
