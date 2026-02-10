@@ -7,6 +7,7 @@ Provides a text-based interface for playing the game.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -41,6 +42,8 @@ from src.skills.combat import Abilities as CombatAbilities
 from src.skills.combat import Combatant, Weapon, WeaponProperty, resolve_attack
 from src.skills.dice import roll_dice
 from src.skills.solo_combat import defy_death, resolve_solo_round_start
+
+logger = logging.getLogger(__name__)
 
 
 class ExitInfo(TypedDict):
@@ -281,6 +284,13 @@ class GameREPL:
 
         if location.description:
             lines.append(location.description)
+            lines.append("")
+
+        # Show controlling faction
+        if location.location_properties and location.location_properties.controlling_faction_hint:
+            lines.append(
+                f"  Territory of the {location.location_properties.controlling_faction_hint}"
+            )
             lines.append("")
 
         # Show NPCs (non-hostile)
@@ -1034,7 +1044,10 @@ class GameREPL:
         # Check location-based quest objectives
         quest_notification = self._check_quest_progress(state, "location", dest_id)
 
-        return f"You travel to {dest_name}.\n\nType /look to see your surroundings.{quest_notification}"
+        # Auto-generate faction quest if location has a controlling faction
+        faction_quest_note = self._maybe_generate_faction_quest(state, dest_id)
+
+        return f"You travel to {dest_name}.\n\nType /look to see your surroundings.{quest_notification}{faction_quest_note}"
 
     def _cmd_exits(self, state: GameState, args: list[str]) -> str | None:
         """Handle exits command - show available exits."""
@@ -2252,6 +2265,37 @@ class GameREPL:
 
         return "".join(notifications)
 
+    def _maybe_generate_faction_quest(self, state: GameState, location_id: UUID) -> str:
+        """Auto-generate a faction quest if location has a controlling faction and none exist."""
+        if state.universe_id is None:
+            return ""
+
+        location = state.engine.dolt.get_entity(location_id, state.universe_id)
+        if not location or not location.location_properties:
+            return ""
+
+        controlling_hint = location.location_properties.controlling_faction_hint
+        if not controlling_hint:
+            return ""
+
+        # Check if there are already available faction quests (avoid spam)
+        quest_service = QuestService(state.engine.dolt, state.engine.neo4j)
+        available = quest_service.get_available_quests(state.universe_id)
+        if available:
+            return ""
+
+        # Generate a faction quest (sync — no LLM enhancement)
+        try:
+            context = quest_service.build_quest_context(state.universe_id, location_id)
+            template = quest_service._select_template(context, None)
+            quest = quest_service._fill_template(template, context)
+            quest_service._persist_quest(quest)
+            return "\n\nYou sense tension in the air. (New quest available — try /quests available)"
+        except Exception as e:
+            logger.debug("Faction quest auto-generation failed: %s", e)
+
+        return ""
+
     def _abandon_quest(self, state: GameState, quest_service: QuestService, quest_name: str) -> str:
         """Abandon an active quest by name."""
         if not state.universe_id:
@@ -2510,12 +2554,13 @@ class GameREPL:
             use_agents=self.use_agents,
         )
 
-        # Initialize conversation service
+        # Initialize conversation service with quest generation support
         self.conversation_service = ConversationService(
             dolt=dolt,
             neo4j=neo4j,
             npc_service=engine.npc_service,
             llm=None,  # LLM integration can be added via set_llm_service
+            quest_service=QuestService(dolt=dolt, neo4j=neo4j),
         )
 
         # Create game state
