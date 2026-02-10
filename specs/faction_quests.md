@@ -91,7 +91,7 @@ In `build_quest_context()`, after existing NPC/location queries:
 
 Uses existing `QuestReward.reputation_changes: dict[UUID, int]` field:
 
-- **TRADES_WITH quests**: +rep for both factions (cooperative)
+- **TRADES_WITH quests**: +rep for quest giver's faction (faction_a)
 - **COMPETES_WITH quests**: +rep for quest giver's faction, -rep for rival
 - **DEPENDS_ON quests**: +rep for dependent faction
 - **CONTROLS quests**: +rep for controlling faction

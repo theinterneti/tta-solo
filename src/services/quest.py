@@ -754,15 +754,52 @@ class QuestService:
                 error=str(e),
             )
 
+    def generate_quest_sync(
+        self,
+        context: QuestContext,
+        quest_type: QuestType | None = None,
+    ) -> QuestGenerationResult:
+        """Generate a quest synchronously (template-only, no LLM enhancement).
+
+        Use this from sync code paths where awaiting is not possible.
+        """
+        try:
+            template = self._select_template(context, quest_type)
+            quest = self._fill_template(template, context)
+            self._persist_quest(quest)
+            return QuestGenerationResult(success=True, quest=quest, used_fallback=True)
+        except Exception as e:
+            logger.error(f"Quest generation (sync) failed: {e}")
+            return QuestGenerationResult(success=False, error=str(e))
+
     def _select_template(
         self,
         context: QuestContext,
         quest_type: QuestType | None = None,
     ) -> QuestTemplateData:
         """Select an appropriate template based on context."""
+        # Reset any prior tension to avoid stale state on reused contexts
+        context._selected_tension = None
+
         # Try faction templates first (60% chance when tensions exist)
         if context.faction_tensions and quest_type is None and random.random() < 0.6:
-            tension = random.choice(context.faction_tensions)
+            # If a giver is specified, prefer tensions involving their faction
+            eligible_tensions = context.faction_tensions
+            if context.giver_id:
+                giver_faction_ids = self._get_faction_ids_for_entity(
+                    context.giver_id, context.universe_id
+                )
+                if giver_faction_ids:
+                    giver_tensions = [
+                        t
+                        for t in context.faction_tensions
+                        if t.faction_a_id in giver_faction_ids
+                        or t.faction_b_id in giver_faction_ids
+                    ]
+                    if giver_tensions:
+                        eligible_tensions = giver_tensions
+
+            tension = random.choice(eligible_tensions)
             faction_templates = _FACTION_QUEST_TEMPLATES.get(tension.relationship_type, [])
             if faction_templates:
                 context._selected_tension = tension
@@ -959,6 +996,11 @@ class QuestService:
             ):
                 return faction.faction_properties.territory_description
         return context.location_name
+
+    def _get_faction_ids_for_entity(self, entity_id: UUID, universe_id: UUID) -> set[UUID]:
+        """Get faction IDs that an entity is a MEMBER_OF."""
+        rels = self.neo4j.get_relationships(entity_id, universe_id, relationship_type="MEMBER_OF")
+        return {rel.to_entity_id for rel in rels}
 
     def _find_faction_member_npc(
         self, npcs: list[Entity], faction_id: UUID, universe_id: UUID

@@ -1347,7 +1347,7 @@ class GameREPL:
                     entity_id=state.character_id,
                     universe_id=state.universe_id,
                     stat=mod.stat,
-                    modifier=mod.modifier,
+                    modifier=abs(mod.modifier),
                     modifier_type=ModifierType.BONUS if mod.modifier > 0 else ModifierType.PENALTY,
                     duration_type=dur_type,
                     duration_remaining=dur_remaining,
@@ -2287,10 +2287,12 @@ class GameREPL:
         # Generate a faction quest (sync — no LLM enhancement)
         try:
             context = quest_service.build_quest_context(state.universe_id, location_id)
-            template = quest_service._select_template(context, None)
-            quest = quest_service._fill_template(template, context)
-            quest_service._persist_quest(quest)
-            return "\n\nYou sense tension in the air. (New quest available — try /quests available)"
+            result = quest_service.generate_quest_sync(context)
+            if result.success and result.quest:
+                return (
+                    "\n\nYou sense tension in the air. "
+                    "(New quest available — try /quests available)"
+                )
         except Exception as e:
             logger.debug("Faction quest auto-generation failed: %s", e)
 

@@ -113,7 +113,7 @@ Each generation step uses:
 - **Temperature**: 0.8 (creative but structured)
 - **Response format**: JSON object matching defined schema
 
-The `generate_structured()` method on LLMService handles higher token budgets and JSON parsing with retry.
+The `generate_structured()` method on LLMService forwards prompts to `provider.complete()` with higher token budgets and returns raw text. JSON parsing and validation is handled by the caller (UniverseGenerator).
 
 ## Fallback Strategy
 

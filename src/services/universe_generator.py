@@ -490,7 +490,19 @@ class UniverseGenerator:
         npc_name_to_id = {e.name: e.id for e in npc_entities}
 
         # Step 6: Create Player Character
-        starting_location_id = location_entities[0].id if location_entities else None
+        # Ensure at least one location exists (fallback if pipeline produced none)
+        if not location_entities:
+            fallback_loc = create_location(
+                name="Starting Area",
+                description="A quiet clearing. Your adventure begins here.",
+                universe_id=universe.id,
+                location_type="forest",
+            )
+            self.dolt.save_entity(fallback_loc)
+            location_entities = [fallback_loc]
+            location_name_to_id[fallback_loc.name] = fallback_loc.id
+
+        starting_location_id = location_entities[0].id
         player = create_character(
             name=player_name,
             description=f"An adventurer exploring the world of {template.name}.",
@@ -499,23 +511,21 @@ class UniverseGenerator:
             ac=14,
             gold_copper=5000,
         )
-        if starting_location_id:
-            player.current_location_id = starting_location_id
+        player.current_location_id = starting_location_id
         self.dolt.save_entity(player)
 
-        if starting_location_id:
-            self.neo4j.create_relationship(
-                Relationship(
-                    universe_id=universe.id,
-                    from_entity_id=player.id,
-                    to_entity_id=starting_location_id,
-                    relationship_type=RelationshipType.LOCATED_IN,
-                )
+        self.neo4j.create_relationship(
+            Relationship(
+                universe_id=universe.id,
+                from_entity_id=player.id,
+                to_entity_id=starting_location_id,
+                relationship_type=RelationshipType.LOCATED_IN,
             )
+        )
 
         return GenerationResult(
             universe=universe,
-            starting_location_id=starting_location_id or player.id,
+            starting_location_id=starting_location_id,
             player_character_id=player.id,
             factions=faction_name_to_id,
             locations=location_name_to_id,
