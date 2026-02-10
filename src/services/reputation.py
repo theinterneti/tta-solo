@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from src.db.memory import InMemoryDoltRepository
+from src.db.interfaces import DoltRepository
 
 
 class ReputationChange(BaseModel):
@@ -47,7 +47,7 @@ def get_reputation_tier(score: int) -> str:
 class ReputationService:
     """Applies and queries faction reputation for characters."""
 
-    dolt: InMemoryDoltRepository
+    dolt: DoltRepository
 
     def apply_reputation_changes(
         self,
