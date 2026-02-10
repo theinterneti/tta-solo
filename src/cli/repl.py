@@ -239,6 +239,12 @@ class GameREPL:
                 description="Show your faction standings",
                 handler=self._cmd_reputation,
             ),
+            Command(
+                name="rest",
+                aliases=[],
+                description="Take a short or long rest to recover",
+                handler=self._cmd_rest,
+            ),
         ]
 
         for cmd in commands:
@@ -416,6 +422,61 @@ class GameREPL:
             sign = "+" if s.score >= 0 else ""
             lines.append(f"  {s.faction_name:<20} {sign}{s.score}  ({s.tier})")
 
+        return "\n".join(lines)
+
+    def _cmd_rest(self, state: GameState, args: list[str]) -> str | None:
+        """Handle rest command."""
+        if state.character_id is None or state.universe_id is None:
+            return "No character loaded."
+
+        rest_type = args[0].lower() if args else "short"
+        if rest_type not in ("short", "long"):
+            return "Usage: /rest short  or  /rest long"
+
+        character = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if character is None or character.stats is None:
+            return "Character not found."
+
+        lines: list[str] = []
+
+        if rest_type == "short":
+            lines.append("You take a short rest (1 hour)...")
+            missing = character.stats.hp_max - character.stats.hp_current
+            healed = missing // 2
+            if healed > 0:
+                character.stats.hp_current += healed
+                lines.append(
+                    f"  HP restored: +{healed}"
+                    f" ({character.stats.hp_current}/{character.stats.hp_max})"
+                )
+            else:
+                lines.append(
+                    f"  HP: {character.stats.hp_current}/{character.stats.hp_max} (already full)"
+                )
+        else:  # long rest
+            lines.append("You take a long rest (8 hours)...")
+            healed = character.stats.hp_max - character.stats.hp_current
+            character.stats.hp_current = character.stats.hp_max
+            if healed > 0:
+                lines.append(
+                    f"  HP fully restored: +{healed}"
+                    f" ({character.stats.hp_current}/{character.stats.hp_max})"
+                )
+            else:
+                lines.append(
+                    f"  HP: {character.stats.hp_current}/{character.stats.hp_max} (already full)"
+                )
+            state.defy_death_uses = 0
+
+        # Restore ability resources
+        if state.resources is not None:
+            restored = state.resources.restore_on_rest(rest_type)
+            if restored:
+                for resource_name in restored:
+                    display = resource_name.replace("cooldown:", "").replace("_", " ")
+                    lines.append(f"  Restored: {display}")
+
+        state.engine.dolt.save_entity(character)
         return "\n".join(lines)
 
     def _cmd_history(self, state: GameState, args: list[str]) -> str | None:
