@@ -52,6 +52,13 @@ class RelationshipType(StrEnum):
     LEADS = "LEADS"
     OPPOSES = "OPPOSES"
 
+    # Faction-to-Faction
+    TRADES_WITH = "TRADES_WITH"
+    COMPETES_WITH = "COMPETES_WITH"
+    DEPENDS_ON = "DEPENDS_ON"
+    CONTROLS = "CONTROLS"
+    INFLUENCES = "INFLUENCES"
+
     # Character-to-Concept
     BELIEVES_IN = "BELIEVES_IN"
     DESIRES = "DESIRES"

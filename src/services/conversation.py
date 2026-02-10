@@ -21,12 +21,14 @@ from src.models.conversation import (
     DialogueOptions,
 )
 from src.models.npc import NPCProfile, RelationshipSummary
+from src.models.quest import Quest
 
 if TYPE_CHECKING:
     from src.db.interfaces import DoltRepository, Neo4jRepository
     from src.models.entity import Entity
     from src.services.llm import LLMService
     from src.services.npc import NPCService
+    from src.services.quest import QuestService
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,7 @@ class ConversationService:
     neo4j: Neo4jRepository
     npc_service: NPCService
     llm: LLMService | None = field(default=None)
+    quest_service: QuestService | None = field(default=None)
 
     async def start_conversation(
         self,
@@ -391,6 +394,17 @@ class ConversationService:
         attitude: str,
     ) -> str:
         """Generate NPC response to player input."""
+        # For quest topic, try generating a faction quest first
+        if topic == ConversationTopic.QUEST:
+            quest = await self._try_generate_quest_for_npc(
+                context.npc_id, context.universe_id, context.location_id
+            )
+            if quest:
+                return (
+                    f"I need someone I can trust. {quest.description} "
+                    f"(New quest available: {quest.name})"
+                )
+
         # Try LLM first
         if self.llm is not None and self.llm.is_available and profile:
             try:
@@ -413,6 +427,35 @@ class ConversationService:
         # Fallback response
         responses = FALLBACK_RESPONSES.get(topic, FALLBACK_RESPONSES[ConversationTopic.CUSTOM])
         return secrets.choice(responses)
+
+    async def _try_generate_quest_for_npc(
+        self,
+        npc_id: UUID,
+        universe_id: UUID,
+        location_id: UUID,
+    ) -> Quest | None:
+        """Try to generate a faction quest if NPC belongs to a faction."""
+        if self.quest_service is None:
+            return None
+
+        # Check if NPC has a MEMBER_OF relationship to any faction
+        member_rels = self.neo4j.get_relationships(
+            npc_id, universe_id, relationship_type="MEMBER_OF"
+        )
+        if not member_rels:
+            return None
+
+        try:
+            context = self.quest_service.build_quest_context(
+                universe_id, location_id, giver_id=npc_id
+            )
+            result = await self.quest_service.generate_quest(context)
+            if result.success and result.quest:
+                return result.quest
+        except Exception as e:
+            logger.debug("Quest generation for NPC failed: %s", e)
+
+        return None
 
     def _build_situation(
         self,

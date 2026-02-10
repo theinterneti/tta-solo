@@ -7,13 +7,14 @@ Provides a text-based interface for playing the game.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TypedDict
 from uuid import UUID, uuid4
 
-from src.content import create_starter_world
+from src.content import UNIVERSE_TEMPLATES, create_starter_world, get_template_by_index
 from src.db.memory import InMemoryDoltRepository, InMemoryNeo4jRepository
 from src.engine import GameEngine
 from src.engine.models import EngineConfig, TurnResult
@@ -36,10 +37,13 @@ from src.models.resources import CooldownTracker, EntityResources, StressMomentu
 from src.services.conversation import ConversationService
 from src.services.npc import NPCService
 from src.services.quest import QuestService
+from src.services.universe_generator import UniverseGenerator
 from src.skills.combat import Abilities as CombatAbilities
 from src.skills.combat import Combatant, Weapon, WeaponProperty, resolve_attack
 from src.skills.dice import roll_dice
 from src.skills.solo_combat import defy_death, resolve_solo_round_start
+
+logger = logging.getLogger(__name__)
 
 
 class ExitInfo(TypedDict):
@@ -70,6 +74,8 @@ class GameState:
     """Number of Defy Death saves used today."""
     active_effects: list[ActiveEffect] = field(default_factory=list)
     """Active stat modifier effects (e.g., +2 AC from Brace for Impact)."""
+    world_context: dict = field(default_factory=dict)
+    """LLM-generated world context for downstream prompts."""
 
 
 @dataclass
@@ -278,6 +284,13 @@ class GameREPL:
 
         if location.description:
             lines.append(location.description)
+            lines.append("")
+
+        # Show controlling faction
+        if location.location_properties and location.location_properties.controlling_faction_hint:
+            lines.append(
+                f"  Territory of the {location.location_properties.controlling_faction_hint}"
+            )
             lines.append("")
 
         # Show NPCs (non-hostile)
@@ -1031,7 +1044,10 @@ class GameREPL:
         # Check location-based quest objectives
         quest_notification = self._check_quest_progress(state, "location", dest_id)
 
-        return f"You travel to {dest_name}.\n\nType /look to see your surroundings.{quest_notification}"
+        # Auto-generate faction quest if location has a controlling faction
+        faction_quest_note = self._maybe_generate_faction_quest(state, dest_id)
+
+        return f"You travel to {dest_name}.\n\nType /look to see your surroundings.{quest_notification}{faction_quest_note}"
 
     def _cmd_exits(self, state: GameState, args: list[str]) -> str | None:
         """Handle exits command - show available exits."""
@@ -1331,7 +1347,7 @@ class GameREPL:
                     entity_id=state.character_id,
                     universe_id=state.universe_id,
                     stat=mod.stat,
-                    modifier=mod.modifier,
+                    modifier=abs(mod.modifier),
                     modifier_type=ModifierType.BONUS if mod.modifier > 0 else ModifierType.PENALTY,
                     duration_type=dur_type,
                     duration_remaining=dur_remaining,
@@ -2249,6 +2265,39 @@ class GameREPL:
 
         return "".join(notifications)
 
+    def _maybe_generate_faction_quest(self, state: GameState, location_id: UUID) -> str:
+        """Auto-generate a faction quest if location has a controlling faction and none exist."""
+        if state.universe_id is None:
+            return ""
+
+        location = state.engine.dolt.get_entity(location_id, state.universe_id)
+        if not location or not location.location_properties:
+            return ""
+
+        controlling_hint = location.location_properties.controlling_faction_hint
+        if not controlling_hint:
+            return ""
+
+        # Check if there are already available faction quests (avoid spam)
+        quest_service = QuestService(state.engine.dolt, state.engine.neo4j)
+        available = quest_service.get_available_quests(state.universe_id)
+        if available:
+            return ""
+
+        # Generate a faction quest (sync — no LLM enhancement)
+        try:
+            context = quest_service.build_quest_context(state.universe_id, location_id)
+            result = quest_service.generate_quest_sync(context)
+            if result.success and result.quest:
+                return (
+                    "\n\nYou sense tension in the air. "
+                    "(New quest available — try /quests available)"
+                )
+        except Exception as e:
+            logger.debug("Faction quest auto-generation failed: %s", e)
+
+        return ""
+
     def _abandon_quest(self, state: GameState, quest_service: QuestService, quest_name: str) -> str:
         """Abandon an active quest by name."""
         if not state.universe_id:
@@ -2417,8 +2466,32 @@ class GameREPL:
         print(banner)
         print("Type /help for commands, or just describe your action.\n")
 
+    def _select_universe_template(self) -> int | None:
+        """Display template selection menu. Returns index or None for classic fallback."""
+        print("\nChoose your universe:")
+        print("-" * 50)
+        for i, template in enumerate(UNIVERSE_TEMPLATES):
+            tags = ", ".join(template.genre_tags[:3])
+            print(f"  {i + 1}. {template.name} ({tags})")
+        print(f"  {len(UNIVERSE_TEMPLATES) + 1}. Classic Eldoria (no AI generation)")
+        print()
+
+        while True:
+            try:
+                choice = input(f"Select (1-{len(UNIVERSE_TEMPLATES) + 1}): ").strip()
+                if not choice:
+                    return 0  # Default to first template
+                num = int(choice)
+                if num == len(UNIVERSE_TEMPLATES) + 1:
+                    return None  # Classic fallback
+                if 1 <= num <= len(UNIVERSE_TEMPLATES):
+                    return num - 1
+                print(f"Please enter 1-{len(UNIVERSE_TEMPLATES) + 1}")
+            except ValueError:
+                print("Please enter a number.")
+
     def _create_demo_world(self, state: GameState, npc_service: NPCService) -> None:
-        """Create a demo world using the starter world content."""
+        """Create a demo world using the starter world content (classic fallback)."""
         result = create_starter_world(
             dolt=state.engine.dolt,
             neo4j=state.engine.neo4j,
@@ -2429,6 +2502,41 @@ class GameREPL:
         state.universe_id = result.universe.id
         state.location_id = result.starting_location_id
         state.character_id = result.player_character_id
+
+    async def _create_generated_world(
+        self, state: GameState, npc_service: NPCService, template_index: int
+    ) -> None:
+        """Create a world using the LLM generation pipeline."""
+        template = get_template_by_index(template_index)
+        if not template:
+            self._create_demo_world(state, npc_service)
+            return
+
+        print(f"\nGenerating '{template.name}'...")
+        generator = UniverseGenerator(
+            dolt=state.engine.dolt,
+            neo4j=state.engine.neo4j,
+            npc_service=npc_service,
+            llm=None,  # LLM integration can be added via set_llm_service
+        )
+
+        result = await generator.generate_from_template(
+            template=template,
+            player_name=state.character_name,
+        )
+
+        state.universe_id = result.universe.id
+        state.location_id = result.starting_location_id
+        state.character_id = result.player_character_id
+        state.world_context = result.universe.world_context
+
+        if result.used_fallback:
+            print("(Generated with template fallback — no LLM configured)")
+        else:
+            print("World generated successfully!")
+        print(f"Factions: {', '.join(result.factions.keys())}")
+        print(f"Locations: {', '.join(result.locations.keys())}")
+        print(f"NPCs: {', '.join(result.npcs.keys())}")
 
     async def run(self, character_name: str = "Hero") -> None:
         """Run the interactive REPL."""
@@ -2448,12 +2556,13 @@ class GameREPL:
             use_agents=self.use_agents,
         )
 
-        # Initialize conversation service
+        # Initialize conversation service with quest generation support
         self.conversation_service = ConversationService(
             dolt=dolt,
             neo4j=neo4j,
             npc_service=engine.npc_service,
             llm=None,  # LLM integration can be added via set_llm_service
+            quest_service=QuestService(dolt=dolt, neo4j=neo4j),
         )
 
         # Create game state
@@ -2462,8 +2571,14 @@ class GameREPL:
             character_name=character_name,
         )
 
-        # Create demo world using starter content
-        self._create_demo_world(state, engine.npc_service)
+        # Universe selection
+        template_index = self._select_universe_template()
+        if template_index is None:
+            # Classic Eldoria fallback
+            self._create_demo_world(state, engine.npc_service)
+        else:
+            # LLM-powered generation
+            await self._create_generated_world(state, engine.npc_service, template_index)
 
         # Start session
         if state.universe_id and state.character_id and state.location_id:
