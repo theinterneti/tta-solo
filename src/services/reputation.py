@@ -96,7 +96,10 @@ class ReputationService:
 
         standings: list[FactionStanding] = []
         for fid_str, score in character.stats.faction_reputations.items():
-            faction_id = UUID(fid_str)
+            try:
+                faction_id = UUID(fid_str)
+            except (ValueError, TypeError):
+                continue
             faction = self.dolt.get_entity(faction_id, universe_id)
             faction_name = faction.name if faction else "Unknown Faction"
 

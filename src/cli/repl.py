@@ -31,6 +31,7 @@ from src.models.ability import (
 )
 from src.models.condition import ActiveEffect, DurationType, ModifierType
 from src.models.conversation import ConversationContext, DialogueOptions
+from src.models.crunch_affinity import SIGNAL_WEIGHTS, CrunchAffinity, CrunchLevel
 from src.models.entity import Entity, EntityType
 from src.models.relationships import Relationship, RelationshipType
 from src.models.resources import CooldownTracker, EntityResources, StressMomentumPool
@@ -77,6 +78,8 @@ class GameState:
     """Active stat modifier effects (e.g., +2 AC from Brace for Impact)."""
     world_context: dict = field(default_factory=dict)
     """LLM-generated world context for downstream prompts."""
+    crunch_affinity: CrunchAffinity = field(default_factory=CrunchAffinity)
+    """Adaptive crunch level for output detail."""
 
 
 @dataclass
@@ -238,6 +241,18 @@ class GameREPL:
                 aliases=["rep", "factions"],
                 description="Show your faction standings",
                 handler=self._cmd_reputation,
+            ),
+            Command(
+                name="rest",
+                aliases=[],
+                description="Take a short or long rest to recover",
+                handler=self._cmd_rest,
+            ),
+            Command(
+                name="setting",
+                aliases=["settings"],
+                description="View or change settings (e.g., /setting crunch narrative)",
+                handler=self._cmd_setting,
             ),
         ]
 
@@ -416,6 +431,61 @@ class GameREPL:
             sign = "+" if s.score >= 0 else ""
             lines.append(f"  {s.faction_name:<20} {sign}{s.score}  ({s.tier})")
 
+        return "\n".join(lines)
+
+    def _cmd_rest(self, state: GameState, args: list[str]) -> str | None:
+        """Handle rest command."""
+        if state.character_id is None or state.universe_id is None:
+            return "No character loaded."
+
+        rest_type = args[0].lower() if args else "short"
+        if rest_type not in ("short", "long"):
+            return "Usage: /rest short  or  /rest long"
+
+        character = state.engine.dolt.get_entity(state.character_id, state.universe_id)
+        if character is None or character.stats is None:
+            return "Character not found."
+
+        lines: list[str] = []
+
+        if rest_type == "short":
+            lines.append("You take a short rest (1 hour)...")
+            missing = character.stats.hp_max - character.stats.hp_current
+            healed = missing // 2
+            if healed > 0:
+                character.stats.hp_current += healed
+                lines.append(
+                    f"  HP restored: +{healed}"
+                    f" ({character.stats.hp_current}/{character.stats.hp_max})"
+                )
+            else:
+                lines.append(
+                    f"  HP: {character.stats.hp_current}/{character.stats.hp_max} (already full)"
+                )
+        else:  # long rest
+            lines.append("You take a long rest (8 hours)...")
+            healed = character.stats.hp_max - character.stats.hp_current
+            character.stats.hp_current = character.stats.hp_max
+            if healed > 0:
+                lines.append(
+                    f"  HP fully restored: +{healed}"
+                    f" ({character.stats.hp_current}/{character.stats.hp_max})"
+                )
+            else:
+                lines.append(
+                    f"  HP: {character.stats.hp_current}/{character.stats.hp_max} (already full)"
+                )
+            state.defy_death_uses = 0
+
+        # Restore ability resources
+        if state.resources is not None:
+            restored = state.resources.restore_on_rest(rest_type)
+            if restored:
+                for resource_name in restored:
+                    display = resource_name.replace("cooldown:", "").replace("_", " ")
+                    lines.append(f"  Restored: {display}")
+
+        state.engine.dolt.save_entity(character)
         return "\n".join(lines)
 
     def _cmd_history(self, state: GameState, args: list[str]) -> str | None:
@@ -2394,6 +2464,137 @@ class GameREPL:
 
         return f"You abandon your quest: {quest.name}\n\n[Removed from quest journal]"
 
+    def _cmd_setting(self, state: GameState, args: list[str]) -> str | None:
+        """Handle /setting command."""
+        if not args:
+            return state.crunch_affinity.get_status()
+
+        if args[0].lower() != "crunch":
+            return "Unknown setting. Usage: /setting crunch narrative|balanced|detailed|auto"
+
+        if len(args) < 2:
+            return state.crunch_affinity.get_status()
+
+        value = args[1].lower()
+        if value == "auto":
+            state.crunch_affinity.unlock()
+            return f"Crunch level unlocked — adaptive mode. {state.crunch_affinity.get_status()}"
+
+        try:
+            level = CrunchLevel(value)
+        except ValueError:
+            return "Usage: /setting crunch narrative|balanced|detailed|auto"
+
+        state.crunch_affinity.set_level(level)
+        return f"Crunch level locked to {level.value}."
+
+    def _command_signal_weight(self, cmd_name: str) -> float:
+        """Return the crunch signal weight for a slash command.
+
+        Uses SIGNAL_WEIGHTS from the crunch_affinity module as the single
+        source of truth for weight values.
+        """
+        combat_cmds = {
+            "attack",
+            "fight",
+            "hit",
+            "defend",
+            "dodge",
+            "block",
+            "use",
+            "cast",
+            "activate",
+        }
+        info_cmds = {
+            "status",
+            "stats",
+            "me",
+            "abilities",
+            "ab",
+            "spells",
+            "skills",
+            "powers",
+            "inventory",
+            "inv",
+            "i",
+        }
+        if cmd_name in combat_cmds:
+            return SIGNAL_WEIGHTS["slash_combat"]
+        if cmd_name in info_cmds:
+            return SIGNAL_WEIGHTS["slash_info"]
+        return 0.0
+
+    def _natural_language_signal_weight(self, text: str) -> float:
+        """Return the crunch signal weight for natural language input.
+
+        Uses SIGNAL_WEIGHTS from the crunch_affinity module as the single
+        source of truth for weight values.
+        """
+        lower = text.lower()
+        # Specific mechanical keywords suggest crunchy intent
+        specific_keywords = {
+            "longsword",
+            "shortsword",
+            "greatsword",
+            "dagger",
+            "rapier",
+            "mace",
+            "crossbow",
+            "longbow",
+            "shortbow",
+            "warhammer",
+            "battleaxe",
+            "handaxe",
+            "fireball",
+            "healing word",
+            "shield",
+            "smite",
+            "sneak attack",
+            "rage",
+            "wild shape",
+            "d20",
+            "roll",
+            "modifier",
+            "advantage",
+            "disadvantage",
+            "ac",
+            "hp",
+            "hit points",
+            "saving throw",
+            "strength",
+            "dexterity",
+            "constitution",
+            "intelligence",
+            "wisdom",
+            "charisma",
+        }
+        for kw in specific_keywords:
+            if kw in lower:
+                return SIGNAL_WEIGHTS["specific_target"]
+
+        # Simple action verbs with targets
+        simple_patterns = {"swing", "hit", "stab", "slash", "shoot", "strike", "punch", "kick"}
+        words = set(lower.split())
+        if words & simple_patterns:
+            return SIGNAL_WEIGHTS["natural_simple"]
+
+        # Vague/narrative language
+        vague_patterns = {
+            "try to",
+            "i want to",
+            "attempt",
+            "sneak",
+            "explore",
+            "wander",
+            "look around",
+        }
+        for vp in vague_patterns:
+            if vp in lower:
+                return SIGNAL_WEIGHTS["natural_vague"]
+
+        # Default to simple narrative
+        return SIGNAL_WEIGHTS["natural_simple"]
+
     def _is_command(self, text: str) -> bool:
         """Check if input is a special command."""
         return text.startswith("/")
@@ -2419,6 +2620,8 @@ class GameREPL:
         # Handle special commands
         if self._is_command(text):
             cmd_name, args = self._parse_command(text)
+            # Record crunch signal for slash commands (including neutral 0.0)
+            state.crunch_affinity.record_signal(self._command_signal_weight(cmd_name))
             if cmd_name in self.commands:
                 result = self.commands[cmd_name].handler(state, args)
                 if result is not None:
@@ -2431,6 +2634,10 @@ class GameREPL:
                 # Fall through to engine processing
                 # Preserve arguments for commands like /fork that need them
                 text = f"{cmd_name} {' '.join(args)}" if args else cmd_name
+
+        # Record crunch signal for natural language input
+        if not self._is_command(text):
+            state.crunch_affinity.record_signal(self._natural_language_signal_weight(text))
 
         # Handle fork command specially
         if text.lower().startswith("fork") or text.lower().startswith("what if"):
@@ -2465,37 +2672,69 @@ class GameREPL:
         if session:
             state.location_id = session.location_id
 
-        return self._format_turn_result(turn_result)
+        return self._format_turn_result(turn_result, state.crunch_affinity.level)
 
-    def _format_turn_result(self, result: TurnResult) -> str:
-        """Format a turn result for display."""
+    def _format_turn_result(
+        self, result: TurnResult, crunch_level: CrunchLevel = CrunchLevel.BALANCED
+    ) -> str:
+        """Format a turn result for display.
+
+        Args:
+            result: The turn result to format.
+            crunch_level: Detail level for mechanical output.
+        """
         parts = []
 
-        # Main narrative
+        # Main narrative (always shown)
         parts.append(result.narrative)
 
-        # Show rolls if any
-        if result.rolls:
-            parts.append("")
-            for roll in result.rolls:
-                roll_str = f"[{roll.description}: {roll.total}"
-                if roll.modifier != 0:
-                    sign = "+" if roll.modifier > 0 else ""
-                    roll_str += f" ({roll.roll}{sign}{roll.modifier})"
-                if roll.is_critical:
-                    roll_str += " CRITICAL!"
-                elif roll.is_fumble:
-                    roll_str += " FUMBLE!"
-                roll_str += "]"
-                parts.append(roll_str)
+        if crunch_level == CrunchLevel.NARRATIVE:
+            # Narrative mode: only show crits/fumbles as dramatic notes
+            if result.rolls:
+                for roll in result.rolls:
+                    if roll.is_critical:
+                        parts.append("A critical strike!")
+                    elif roll.is_fumble:
+                        parts.append("A terrible fumble!")
+        elif crunch_level == CrunchLevel.BALANCED:
+            # Balanced mode: compact roll totals
+            if result.rolls:
+                parts.append("")
+                for roll in result.rolls:
+                    roll_str = f"[{roll.description}: {roll.total}"
+                    if roll.is_critical:
+                        roll_str += " CRITICAL!"
+                    elif roll.is_fumble:
+                        roll_str += " FUMBLE!"
+                    roll_str += "]"
+                    parts.append(roll_str)
+            # State changes as bullet list
+            if result.state_changes:
+                parts.append("")
+                for change in result.state_changes:
+                    parts.append(f"* {change}")
+        else:
+            # Detailed mode: full breakdown with modifiers
+            if result.rolls:
+                parts.append("")
+                for roll in result.rolls:
+                    roll_str = f"[{roll.description}: {roll.total}"
+                    if roll.modifier != 0:
+                        sign = "+" if roll.modifier > 0 else ""
+                        roll_str += f" ({roll.roll}{sign}{roll.modifier})"
+                    if roll.is_critical:
+                        roll_str += " CRITICAL!"
+                    elif roll.is_fumble:
+                        roll_str += " FUMBLE!"
+                    roll_str += "]"
+                    parts.append(roll_str)
+            # State changes as bullet list
+            if result.state_changes:
+                parts.append("")
+                for change in result.state_changes:
+                    parts.append(f"* {change}")
 
-        # Show state changes
-        if result.state_changes:
-            parts.append("")
-            for change in result.state_changes:
-                parts.append(f"* {change}")
-
-        # Show any errors
+        # Show any errors (always)
         if result.error:
             parts.append(f"\n[Error: {result.error}]")
 
